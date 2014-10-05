@@ -27,13 +27,13 @@ endif
 all: docs
 
 dependents:
-	-cd /home/sancho/Desktop/k/kohaerenzstiftung/Debug && $(MAKE) all
+	-cd /home/sancho/git/c/kohaerenzstiftung/Debug && $(MAKE) clean all
 
 # Tool invocations
-docs: $(OBJS) $(USER_OBJS) /home/sancho/Desktop/k/kohaerenzstiftung/Debug/libkohaerenzstiftung.so
+docs: $(OBJS) $(USER_OBJS) /home/sancho/git/c/kohaerenzstiftung/Debug/libkohaerenzstiftung.so
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C Linker'
-	gcc -L"/home/sancho/Desktop/k/kohaerenzstiftung/Debug" -o "docs" $(OBJS) $(USER_OBJS) $(LIBS)
+	gcc -L"/home/sancho/git/c/kohaerenzstiftung/Debug" -o "docs" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -44,6 +44,6 @@ clean:
 
 .PHONY: all clean dependents
 .SECONDARY:
-/home/sancho/Desktop/k/kohaerenzstiftung/Debug/libkohaerenzstiftung.so:
+/home/sancho/git/c/kohaerenzstiftung/Debug/libkohaerenzstiftung.so:
 
 -include ../makefile.targets
