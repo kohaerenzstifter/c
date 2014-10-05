@@ -109,12 +109,12 @@ static void wwwidgetGet(char *url, int fromParent, int toParent,
 	terror(failIfFalse((mkdtemp(tempDir)) != NULL))
 	haveTempDir = TRUE;
 
-	terror(urlWanted = getValue(requestParameters, "url", e))
+	terror(urlWanted = getValue(requestHeaders, "url", e))
 
 	terror(displayWidthString =
-			getValue(requestParameters, "displayWidth", e))
+			getValue(requestHeaders, "displayWidth", e))
 	terror(displayHeightString =
-			getValue(requestParameters, "displayHeight", e))
+			getValue(requestHeaders, "displayHeight", e))
 
 	terror(displayWidth = parseInteger(displayWidthString, FALSE, e))
 	terror(displayHeight = parseInteger(displayHeightString, FALSE, e))
@@ -133,13 +133,13 @@ static void wwwidgetGet(char *url, int fromParent, int toParent,
 		resultFile = screenshotPath;
 	} else {
 		terror(xString =
-				getValue(requestParameters, "x", e))
+				getValue(requestHeaders, "x", e))
 		terror(yString =
-				getValue(requestParameters, "y", e))
+				getValue(requestHeaders, "y", e))
 		terror(widthString =
-				getValue(requestParameters, "width", e))
+				getValue(requestHeaders, "width", e))
 		terror(heightString =
-				getValue(requestParameters, "height", e))
+				getValue(requestHeaders, "height", e))
 
 		terror(x = parseInteger(xString, FALSE, e))
 		terror(y = parseInteger(yString, FALSE, e))
