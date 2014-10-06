@@ -56,17 +56,15 @@ typedef struct _handler {
 } handler_t;
 
 static handler_t *handlers = NULL;
+static char *configFile = NULL;
 
 static GList *responseHeaders = NULL;
-
-typedef struct _keyValuePair {
-	char *key;
-	char *value;
-} keyValuePair_t;
 
 typedef void (*authenticateFunc_t)(struct MHD_Connection *connection, err_t *e);
 
 typedef struct _service {
+	setupFunc_t setup;
+	teardownFunc_t teardown;
 	char *name;
 	handlerFunc_t putHandler;
 	handlerFunc_t postHandler;
@@ -1415,6 +1413,10 @@ static void freeServices(GList *services)
 	GList *cur = NULL;
 
 	for (cur = services; cur != NULL; cur = g_list_next(cur)) {
+		service_t *service = cur->data;
+		if (service->teardown != NULL) {
+			service->teardown();
+		}
 		freeService(cur->data);
 	}
 	g_list_free(services);
@@ -1440,12 +1442,71 @@ static void unloadPlugins()
 	freeLibraries(libraries);
 }
 
-static void reloadPlugins(err_t *e)
+static GList *getKeyValuePairs(GKeyFile *keyFile, char *name, err_t *e)
+{
+	mark();
+
+	GList *_result = NULL;
+	GList *result = NULL;
+	gchar **keys = NULL;
+	gsize length = 0;
+	int i = 0;
+	gchar *value = NULL;
+
+	keys = g_key_file_get_keys(keyFile, name, &length, NULL);
+
+	if (keys != NULL) {
+		for (i = 0; i < length; i++) {
+			keyValuePair_t *keyValuePair = NULL;
+
+			free(value); value = NULL;
+			terror(failIfFalse((value = g_key_file_get_value(keyFile,
+					name, keys[i], NULL)) != NULL))
+			keyValuePair = calloc(1, sizeof(keyValuePair_t));
+			keyValuePair->key = strdup(keys[i]);
+			keyValuePair->value = strdup(value);
+
+			_result = g_list_append(_result, keyValuePair);
+		}
+	}
+
+	result = _result; _result = NULL;
+finish:
+	if (value != NULL) {
+		free(value);
+	}
+	if (_result != NULL) {
+		freeKeyValuePairs(_result);
+	}
+	if (keys != NULL) {
+		g_strfreev(keys);
+	}
+	return result;
+}
+
+static void setupService(service_t *service, GKeyFile *keyFile, err_t *e)
+{
+	mark();
+
+	GList *keyValuePairs = NULL;
+
+	terror(keyValuePairs = getKeyValuePairs(keyFile, service->name, e))
+
+	terror(service->setup(keyValuePairs, e))
+
+finish:
+	if (keyValuePairs != NULL) {
+		freeKeyValuePairs(keyValuePairs);
+	}
+}
+
+static gboolean reloadPlugins(GKeyFile *keyFile, err_t *e)
 {
 	mark();
 
 	defineError();
 
+	gboolean result = FALSE;
 	DIR *directory = NULL;
 	struct dirent *dirent = NULL;
 	size_t length = -1;
@@ -1481,8 +1542,16 @@ static void reloadPlugins(err_t *e)
 	}
 	unloadPlugins();
 
+	for (cur = tmpServices; cur != NULL; cur = g_list_next(cur)) {
+		service_t *service = cur->data;
+		if (service->setup != NULL) {
+			terror(setupService(service, keyFile, e))
+		}
+	}
+
 	libraries = tmpLibraries; tmpLibraries = NULL;
 	services = tmpServices; tmpServices = NULL;
+	result = TRUE;
 finish:
 	freeServices(tmpServices); tmpServices = NULL;
 	freeLibraries(tmpLibraries);
@@ -1492,9 +1561,12 @@ finish:
 	if (directory != NULL) {
 		closedir(directory);
 	}
+	return result;
 }
 
 void registerPlugin(char *name,
+		setupFunc_t setup,
+		teardownFunc_t teardown,
 		handlerFunc_t putHandler,
 		handlerFunc_t postHandler,
 		handlerFunc_t getHandler,
@@ -1507,11 +1579,15 @@ void registerPlugin(char *name,
 	GList *cur = NULL;
 	service_t *service = NULL;
 
+	terror(failIfFalse(strcmp(name, "main") != 0))
+
 	for (cur = tmpServices; cur != NULL; cur = g_list_next(cur)) {
 		service = cur->data;
 		terror(failIfFalse((strcmp(service->name, name) != 0)))
 	}
 	service = calloc(1, sizeof(service_t));
+	service->setup = setup;
+	service->teardown = teardown;
 	service->authenticate = authenticate;
 	service->deleteHandler = deleteHandler;
 	service->getHandler = getHandler;
@@ -1553,8 +1629,21 @@ int main(int argc, char *argv[])
 	int32_t port = 0;
 	gboolean childrenLeft = FALSE;
 	gboolean shuttingDown = FALSE;
+	GKeyFile *keyFile = NULL;
+	GKeyFile *tmpKeyFile = NULL;
+	GList *keyValuePairs = NULL;
+	char *value = NULL;
 
 	GOptionEntry optionEntries[] = {
+			{
+					"configFile",
+					'c',
+					0,
+					G_OPTION_ARG_STRING,
+					&configFile,
+					"configFile",
+					NULL
+			},
 			{
 					"daemonize",
 					'd',
@@ -1565,75 +1654,12 @@ int main(int argc, char *argv[])
 					NULL
 			},
 			{
-					"minHandlers",
-					'a',
-					0,
-					G_OPTION_ARG_INT,
-					&minHandlers,
-					"minHandlers",
-					NULL
-			},
-			{
-					"maxHandlers",
-					'z',
-					0,
-					G_OPTION_ARG_INT,
-					&maxHandlers,
-					"maxHandlers",
-					NULL
-			},
-			{
 					"logDirectory",
 					'l',
 					0,
 					G_OPTION_ARG_STRING,
 					&logDirectory,
 					"logDirectory",
-					NULL
-			},
-			{
-					"pluginDirectory",
-					'p',
-					0,
-					G_OPTION_ARG_STRING,
-					&pluginDirectory,
-					"pluginDirectory",
-					NULL
-			},
-			{
-					"caCertPath",
-					'c',
-					0,
-					G_OPTION_ARG_STRING,
-					&caCertPath,
-					"caCertPath",
-					NULL
-			},
-			{
-					"serverCertPath",
-					's',
-					0,
-					G_OPTION_ARG_STRING,
-					&serverCertPath,
-					"serverCertPath",
-					NULL
-			},
-			{
-					"serverKeyPath",
-					'k',
-					0,
-					G_OPTION_ARG_STRING,
-					&serverKeyPath,
-					"serverKeyPath",
-					NULL
-			},
-			{
-					"port",
-					'x',
-					0,
-					G_OPTION_ARG_INT,
-					&port,
-					"port",
 					NULL
 			},
 			{
@@ -1651,6 +1677,27 @@ int main(int argc, char *argv[])
 			optionEntries, NULL);
 	terror(failIfFalse(g_option_context_parse(optionContext,
 			&argc, &argv, &gerror)))
+
+	terror(failIfFalse(configFile != NULL))
+
+	keyFile = g_key_file_new();
+	terror(failIfFalse(g_key_file_load_from_file(keyFile,
+			configFile, G_KEY_FILE_NONE, NULL)))
+	terror(keyValuePairs = getKeyValuePairs(keyFile, "main", e))
+
+	terror(value = getValue(keyValuePairs, "minHandlers", e))
+	terror(minHandlers = parseInteger(value, TRUE, e))
+	terror(value = getValue(keyValuePairs, "maxHandlers", e))
+	terror(maxHandlers = parseInteger(value, TRUE, e))
+	terror(value = getValue(keyValuePairs, "port", e))
+	terror(port = parseInteger(value, TRUE, e))
+	terror(pluginDirectory = getValue(keyValuePairs, "pluginDirectory", e))
+	terror(value = getValue(keyValuePairs, "secure", e))
+	if (strcmp(value, "yes") == 0) {
+		terror(caCertPath = getValue(keyValuePairs, "caCertPath", e))
+		terror(serverCertPath = getValue(keyValuePairs, "serverCertPath", e))
+		terror(serverKeyPath = getValue(keyValuePairs, "serverKeyPath", e))
+	}
 
 	terror(failIfFalse(minHandlers >= 0))
 	terror(failIfFalse(maxHandlers >= minHandlers))
@@ -1708,12 +1755,19 @@ int main(int argc, char *argv[])
 			}
 		}
 		if (time(NULL) >= reloadPluginsAt) {
-			//we need to kill all child processes
-			//when we reload the plugins because we need to
-			//be sure that the children have the correct plugins
-			//loaded
-			terror(killChildren(maxHandlers, FALSE, e))
-					reloadPlugins(NULL);
+			tmpKeyFile = g_key_file_new();
+			if (g_key_file_load_from_file(tmpKeyFile,
+					configFile, G_KEY_FILE_NONE, NULL)) {
+				//we need to kill all child processes
+				//when we reload the plugins because we need to
+				//be sure that the children have the correct plugins
+				//loaded
+				terror(killChildren(maxHandlers, FALSE, e))
+				if (reloadPlugins(tmpKeyFile, NULL)) {
+					g_key_file_free(keyFile);
+					keyFile = tmpKeyFile;
+				}
+			}
 		}
 		childrenLeft = reapChildren(FALSE);
 		tv.tv_sec = 1;
@@ -1750,6 +1804,12 @@ int main(int argc, char *argv[])
 	}
 finish:
 	MHD_stop_daemon(d);
+	if (keyValuePairs != NULL) {
+		freeKeyValuePairs(keyValuePairs);
+	}
+	if (keyFile != NULL) {
+		g_key_file_free(keyFile);
+	}
 	if (gerror != NULL) {
 		g_error_free(gerror);
 	}
@@ -1757,6 +1817,7 @@ finish:
 		g_option_context_free(optionContext);
 	}
 	unloadPlugins();
+	free(configFile);
 	free(handlers);
 	free(logDirectory);
 	free(caCert);

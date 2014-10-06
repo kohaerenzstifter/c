@@ -29,6 +29,7 @@
 #include <kohaerenzstiftung.h>
 #include <httpd.h>
 
+static char *mustPassword = NULL;
 
 static void getScreenshot(char *url, int displayWidth,
 		int displayHeight, int colorDepth, char *tempDir, err_t *e)
@@ -173,7 +174,7 @@ static void wwwidgetAuthenticate(struct MHD_Connection *connection, err_t *e)
 
 	ok = (strcmp(username, "wwwidget") == 0);
 	terror(failIfFalse(ok))
-	ok = (strcmp(password, "ElJarabeTapatio") == 0);
+	ok = (strcmp(password, mustPassword) == 0);
 	terror(failIfFalse(ok))
 
 finish:
@@ -182,9 +183,26 @@ finish:
 	return;
 }
 
+static void teardown(void)
+{
+	free(mustPassword);
+}
+
+static void setup(GList *keyValuePairs, err_t *e)
+{
+	char *password = NULL;
+
+	terror(password = getValue(keyValuePairs, "password", e))
+
+	mustPassword = strdup(password);
+
+finish:
+	return;
+}
+
 void startRegistry(err_t *e)
 {
-	terror(registerPlugin("wwwidget", NULL, NULL,
+	terror(registerPlugin("wwwidget", setup, teardown, NULL, NULL,
 			&wwwidgetGet, NULL, &wwwidgetAuthenticate, e))
 finish:
 	return;

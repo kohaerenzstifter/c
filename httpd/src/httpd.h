@@ -26,6 +26,13 @@
 #define debug(fmt, ...)
 #endif
 
+typedef struct _keyValuePair {
+	char *key;
+	char *value;
+} keyValuePair_t;
+
+typedef void (*teardownFunc_t)();
+typedef void (*setupFunc_t)(GList *keyValuePairs, err_t *e);
 typedef void (*handlerFunc_t)(char *url, int fromParent, int toParent,
 		GList *requestHeaders, GList *requestParameters, gboolean *responseQueued,
 		err_t *e);
@@ -41,6 +48,8 @@ void respondFromBuffer(int toParent, uint32_t status, void *buffer,
 		uint32_t len, gboolean *responseQueued, err_t *e);
 
 void registerPlugin(char *name,
+		setupFunc_t setup,
+		teardownFunc_t teardown,
 		handlerFunc_t putHandler,
 		handlerFunc_t postHandler,
 		handlerFunc_t getHandler,
