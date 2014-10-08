@@ -1691,12 +1691,16 @@ int main(int argc, char *argv[])
 	terror(maxHandlers = parseInteger(value, TRUE, e))
 	terror(value = getValue(keyValuePairs, "port", e))
 	terror(port = parseInteger(value, TRUE, e))
-	terror(pluginDirectory = getValue(keyValuePairs, "pluginDirectory", e))
+	terror(value = getValue(keyValuePairs, "pluginDirectory", e))
+	pluginDirectory = strdup(value);
 	terror(value = getValue(keyValuePairs, "secure", e))
 	if (strcmp(value, "yes") == 0) {
-		terror(caCertPath = getValue(keyValuePairs, "caCertPath", e))
-		terror(serverCertPath = getValue(keyValuePairs, "serverCertPath", e))
-		terror(serverKeyPath = getValue(keyValuePairs, "serverKeyPath", e))
+		terror(value = getValue(keyValuePairs, "caCertPath", e))
+		caCertPath = strdup(value);
+		terror(value = getValue(keyValuePairs, "serverCertPath", e))
+		serverCertPath = strdup(value);
+		terror(value = getValue(keyValuePairs, "serverKeyPath", e))
+		serverKeyPath = strdup(value);
 	}
 
 	terror(failIfFalse(minHandlers >= 0))
@@ -1757,7 +1761,7 @@ int main(int argc, char *argv[])
 		if (time(NULL) >= reloadPluginsAt) {
 			tmpKeyFile = g_key_file_new();
 			if (g_key_file_load_from_file(tmpKeyFile,
-					configFile, G_KEY_FILE_NONE, NULL)) {
+				configFile, G_KEY_FILE_NONE, NULL)) {
 				//we need to kill all child processes
 				//when we reload the plugins because we need to
 				//be sure that the children have the correct plugins
@@ -1817,15 +1821,16 @@ finish:
 		g_option_context_free(optionContext);
 	}
 	unloadPlugins();
+	free(pluginDirectory);
+	free(caCertPath);
+	free(serverCertPath);
+	free(serverKeyPath);
 	free(configFile);
 	free(handlers);
 	free(logDirectory);
 	free(caCert);
 	free(serverCert);
 	free(serverKey);
-	free(caCertPath);
-	free(serverCertPath);
-	free(serverKeyPath);
 	closeOutput();
 	return EXIT_SUCCESS;
 }
