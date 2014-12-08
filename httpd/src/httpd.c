@@ -2,7 +2,7 @@
  ============================================================================
  Name        : httpd.c
  Author      : Martin Knappe (martin.knappe@gmail.com)
- Version     : 0.70
+ Version     : 0.84
  Copyright   : Your copyright notice
  Description : Simple preforking http(s) server made with libmycrohttpd
  ============================================================================
@@ -98,8 +98,8 @@ static int32_t maxHandlers = -1;
 static char *logDirectory = NULL;
 static char *pluginDirectory = NULL;
 static time_t reloadPluginsAt = 0;
-static sigset_t signalsBlocked;
-static sigset_t signalsAllowed;
+//static sigset_t signalsBlocked;
+//static sigset_t signalsAllowed;
 
 //#define DEBUG_PARENT 1
 //#define DEBUG_CHILD 1
@@ -410,14 +410,15 @@ static void doSignals()
 {
 	mark();
 
+	sigset_t signalsBlocked;
 	struct sigaction action;
 
 	sigfillset(&signalsBlocked);
 
-	sigfillset(&signalsAllowed);
+	/*sigfillset(&signalsAllowed);
 	sigdelset(&signalsAllowed, SIGTERM);
 	sigdelset(&signalsAllowed, SIGINT);
-	sigdelset(&signalsAllowed, SIGALRM);
+	sigdelset(&signalsAllowed, SIGALRM);*/
 
 	action.sa_handler = &processSignal;
 	action.sa_mask = signalsBlocked;
@@ -427,7 +428,8 @@ static void doSignals()
 	sigaction(SIGINT, &action, NULL);
 	sigaction(SIGALRM, &action, NULL);
 
-	sigprocmask(SIG_SETMASK, &signalsBlocked, NULL);
+	action.sa_handler = SIG_IGN;
+	sigaction(SIGPIPE, &action, NULL);
 }
 
 static handlerFunc_t validateRequest(struct MHD_Connection *con, char *url,
@@ -814,7 +816,6 @@ static void forkHandler(handler_t *handler, err_t *e)
 		fcntl(handler->toHandler, F_SETFL, O_NONBLOCK);
 	} else {
 		//child process
-		sigprocmask(SIG_SETMASK, &signalsAllowed, NULL);
 		isChild = TRUE;
 		close(pipe1[PIPE_READ]);
 		close(pipe2[PIPE_WRITE]);
@@ -1747,8 +1748,6 @@ int main(int argc, char *argv[])
 
 	reloadPluginsAt = time(NULL);
 	while (!(shuttingDown&&(!childrenLeft))) {
-		sigprocmask(SIG_SETMASK, &signalsAllowed, NULL);
-		sigprocmask(SIG_SETMASK, &signalsBlocked, NULL);
 		if (sigTerm) {
 			stopReforking = TRUE;
 			sigTerm = FALSE;
