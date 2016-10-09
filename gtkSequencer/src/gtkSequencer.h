@@ -1,3 +1,6 @@
+#ifndef GTKSEQUENCER_H_
+#define GTKSEQUENCER_H_
+
 #include <stdint.h>
 #include <stdlib.h>
 #include <math.h>
@@ -20,8 +23,8 @@ pthread_mutex_t mutex;
 #define CROTCHETS_PER_BAR 4
 
 #define EVENTSTEPS_PER_USERSTEP(p) \
-  (p->real.type == PATTERNTYPE_NOTE) ? NOTEEVENTSTEPS_PER_USERSTEP : \
-  CONTROLLEREVENTSTEPS_PER_USERSTEP
+  ((p->real.type == PATTERNTYPE_NOTE) ? NOTEEVENTSTEPS_PER_USERSTEP : \
+  CONTROLLEREVENTSTEPS_PER_USERSTEP)
 
 #define NUMBER_USERSTEPS(p) \
   (p->real.bars * \
@@ -73,32 +76,33 @@ pthread_mutex_t mutex;
 #define CAN_RANDOMISE(p) \
   (PATTERN_TYPE(p) == PATTERNTYPE_DUMMY) ? TRUE : \
   (PATTERN_TYPE(p) == PATTERNTYPE_CONTROLLER) ? \
-  (g_slist_length(p->real.controller.values) > 0) : \
-  (g_slist_length(p->real.note.values) > 0)
+  (g_slist_length((GSList *) p->real.controller.values) > 0) : \
+  (g_slist_length((GSList *) p->real.note.values) > 0)
 
 #define VALUE_NAME(p, v) \
-  (p->real.type == PATTERNTYPE_NOTE) ? \
-  ((noteValue_t *) v)->name : ((controllerValue_t *) v)->name
+  ((p->real.type) == PATTERNTYPE_NOTE) ? \
+  (char *) ((noteValue_t *) v)->name : (char *) ((controllerValue_t *) v)->name
 
 #define ADDR_PATTERN_VALUES(p) \
   (p->real.type == PATTERNTYPE_NOTE) ? \
-  &(p->real.note.values) : &(p->real.controller.values)
+  (GSList **) &(p->real.note.values) : (GSList **) &(p->real.controller.values)
 
 #define SET_STEP_FROM_STEP(p, s, t) \
   do { \
     if (PATTERN_TYPE(p) == PATTERNTYPE_DUMMY) { \
 		dummyUserStep_t *source = s; \
 		dummyUserStep_t *target = t; \
-		setDummyStep(target, source->set); \
+		setDummyStep((dummyUserStep_t *) target, source->set, lockCount); \
     } else if (PATTERN_TYPE(p) == PATTERNTYPE_CONTROLLER) { \
 		controllerUserStep_t *source = s; \
 		controllerUserStep_t *target = t; \
-		setControllerStep(current.pattern, target, source->value); \
+		setControllerStep((pattern_t *) p, target, \
+		  (GSList *) source->value, lockCount); \
     } else { \
 		noteUserStep_t *source = s; \
 		noteUserStep_t *target = t; \
-		setNoteStep(p, target, source->value); \
-		setNoteSlide(p, target, source->slide); \
+		setNoteStep(p, target, (GSList *) source->value, lockCount); \
+		setNoteSlide((pattern_t *) p, target, source->slide, lockCount); \
     } \
   } while (FALSE);
 
@@ -119,34 +123,31 @@ typedef enum {
 } syncEventType_t;
 
 typedef struct syncEvent {
-	syncEventType_t syncEventType;
-	uint64_t at;
-	struct syncEvent *next;
+	volatile syncEventType_t syncEventType;
+	volatile uint64_t at;
+	volatile struct syncEvent *next;
 } syncEvent_t;
 
 
 typedef struct {
-	snd_seq_event_t *snd_seq_event;
-	char *name;
-	char tone;
-	int8_t octave;
-	gboolean sharp;
+	volatile snd_seq_event_t *snd_seq_event;
+	volatile char *name;
+	volatile char tone;
+	volatile int8_t octave;
+	volatile gboolean sharp;
 } noteValue_t;
-
-//snd_seq_ev_set_noteon(result->note.on, 0, note, velocity);
-//snd_seq_ev_set_noteoff(result->note.off, 0, note, velocity);
 
 typedef struct noteEventStep noteEventStep_t;
 
 typedef struct noteEvent {
-	noteValue_t *noteValue;
-	noteEventStep_t *noteEventStep;
+	volatile noteValue_t *noteValue;
+	volatile noteEventStep_t *noteEventStep;
 	union {
 		struct {
-			struct noteEvent *offNoteEvent;
+			volatile struct noteEvent *offNoteEvent;
 		} on;
 		struct {
-			GSList *noteOffLink;
+			volatile GSList *noteOffLink;
 		} off;
 	};
 } noteEvent_t;
@@ -154,36 +155,36 @@ typedef struct noteEvent {
 
 
 struct noteEventStep {
-	noteEvent_t *onNoteEvent;
-	noteEvent_t *offNoteEvent;
+	volatile noteEvent_t *onNoteEvent;
+	volatile noteEvent_t *offNoteEvent;
 };
 
 
 typedef struct {
-	gboolean slide;
-	GSList *value;
-	noteEvent_t *onNoteEvent;
+	volatile gboolean slide;
+	volatile GSList *value;
+	volatile noteEvent_t *onNoteEvent;
 } noteUserStep_t;
 
 
 
 typedef struct {
-	snd_seq_event_t *event;
-	char *name;
-	uint8_t value;
+	volatile snd_seq_event_t *event;
+	volatile char *name;
+	volatile uint8_t value;
 } controllerValue_t;
 
 typedef struct {
-	snd_seq_event_t *value;
+	volatile snd_seq_event_t *value;
 } controllerEventStep_t;
 
 typedef struct {
-	GSList *value;
-	snd_seq_event_t **event;
+	volatile GSList *value;
+	volatile snd_seq_event_t **event;
 } controllerUserStep_t;
 
 typedef struct {
-	gboolean set;
+	volatile gboolean set;
 } dummyUserStep_t;
 
 typedef enum {
@@ -193,42 +194,42 @@ typedef enum {
 } patternType_t;
 
 typedef struct pattern {
-	gboolean isRoot;
-	GSList *children;
+	volatile gboolean isRoot;
+	volatile GSList *children;
 
 	union {
 		struct {
 			//TODO
 		} root;
 		struct {
-			struct pattern *parent;
-			char *name;
-			uint8_t channel;
+			volatile struct pattern *parent;
+			volatile char *name;
+			volatile uint8_t channel;
 
 			struct {
-				uint32_t userStepsPerBar;
-				uint32_t bars;
+				volatile uint32_t userStepsPerBar;
+				volatile uint32_t bars;
 			};
 
-			patternType_t type;
+			volatile patternType_t type;
 
 			union {
 				struct {
-					dummyUserStep_t *steps;
+					volatile dummyUserStep_t *steps;
 				} dummy;
 				struct {
-					GSList *values;
+					volatile GSList *values;
 					struct {
-						noteEventStep_t *event;
-						noteUserStep_t *user;
+						volatile noteEventStep_t *event;
+						volatile noteUserStep_t *user;
 					} steps;
 				} note;
 				struct {
-					uint8_t parameter;
-					GSList *values;
+					volatile uint8_t parameter;
+					volatile GSList *values;
 					struct {
-						controllerEventStep_t *event;
-						controllerUserStep_t *user;
+						volatile controllerEventStep_t *event;
+						volatile controllerUserStep_t *user;
 					} steps;
 				} controller;
 			};
@@ -256,12 +257,12 @@ VARIABLE struct {
 volatile VARIABLE uint32_t adjustment;
 
 volatile VARIABLE struct {
-	pthread_cond_t wakeupConsumers;
-	pthread_mutex_t mutex;
+	volatile pthread_cond_t wakeupConsumers;
+	volatile pthread_mutex_t mutex;
 	struct {
-		syncEvent_t *head;
-		syncEvent_t *tail;
-		syncEvent_t *last;
+		volatile syncEvent_t *head;
+		volatile syncEvent_t *tail;
+		volatile syncEvent_t *last;
 	} queue;
 } syncEvents;
 
@@ -270,12 +271,13 @@ VARIABLE struct {
 	pthread_t output;
 } threads;
 
-volatile VARIABLE struct {
-	GSList *value;
+VARIABLE struct {
+	volatile GSList *value;
 } notesOff;
 
-INITIALIZED_VARIABLE(, long, subtractSeconds, 0)
+INITIALIZED_VARIABLE(volatile , long, subtractSeconds, 0)
 INITIALIZED_VARIABLE(volatile, gboolean, goingDown, FALSE)
+INITIALIZED_VARIABLE(volatile , noteEvent_t, *pendingOff, NULL)
 
 
 /*++++++++++++++++++++++++++++++++ FUNCTIONS +++++++++++++++++++++++++++++++++*/
@@ -283,8 +285,11 @@ INITIALIZED_VARIABLE(volatile, gboolean, goingDown, FALSE)
 void *outputFunction(void *param);
 void *inputFunction(void *param);
 void gtkFunction(int argc, char *argv[]);
+void guiTest(uint32_t iterations);
 void gtkSignalStep(uint64_t step);
 void gtkSignalStop();
 void gtkSignalSpeed(uint64_t nanosecondsPerCrotchet);
 void gtkInit(void);
 void gtkPrepareShutdown(void);
+
+#endif /* GTKSEQUENCER_H_ */

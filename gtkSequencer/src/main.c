@@ -5,64 +5,6 @@ static volatile gboolean terminate = FALSE;
 static int signalPipe[2];
 
 
-/*static void setupRealPattern(pattern_t *pattern)
-{
-	//TODO: alloc?
-
-	pattern_t *parent = pattern->value.reall.parent;
-	uint32_t parentNumberOfUserSteps = 0;
-	uint32_t parentUnits =
-	  parent->root ? 1 : parent->value.reall.units;
-	uint32_t stepsPerUnitFactor = 0;
-	uint32_t unitFactor = 0;
-	struct {
-	    uint32_t stepsPerUnit;
-        uint32_t barsPerUnit;
-	} granularity, parentGranularity;
-
-    granularity.stepsPerUnit =
-      pattern->value.reall.granularity.stepsPerUnit;
-    granularity.barsPerUnit =
-      pattern->value.reall.granularity.barsPerUnit;
-    parentGranularity.stepsPerUnit = parent->root ? 1 :
-      parent->value.reall.granularity.stepsPerUnit;
-    parentGranularity.barsPerUnit = parent->root ? 1 :
-      parent->value.reall.granularity.barsPerUnit;
-    parentNumberOfUserSteps = parentGranularity.stepsPerUnit *
-      parentGranularity.barsPerUnit * parentUnits;
-    unitFactor =
-      (granularity.barsPerUnit * pattern->value.reall.units) /
-      (parentGranularity.barsPerUnit * parent->value.reall.units);
-    stepsPerUnitFactor = granularity.stepsPerUnit /
-      ((granularity.barsPerUnit / parentGranularity.barsPerUnit)
-      * parentGranularity.stepsPerUnit);
-
-	for (uint32_t i = 0; i < parentNumberOfUserSteps; i++) {
-		userStepGeneral_t *parentUserStepGeneral =
-		  (parent->root) ? NULL :
-		  (parent->value.reall.type == PATTERNTYPE_NOTE) ?
-		  &(parent->value.reall.note.userSteps[i].general) :
-		  &(parent->value.reall.controller.userSteps[i].general);
-
-
-        for (uint32_t j = 0; j < unitFactor; j++) {
-            for (uint32_t offset = 0; offset < stepsPerUnitFactor; offset++) {
-				uint32_t idx = (j * granularity.stepsPerUnit) + offset;
-
-				userStepGeneral_t *userStepGeneral =
-				  (pattern->value.reall.type == PATTERNTYPE_NOTE) ?
-				  &(pattern->value.reall.note.userSteps[idx].general) :
-				  &(pattern->value.reall.controller.userSteps[idx].general);
-		
-				userStepGeneral->parent.value = parentUserStepGeneral;
-				userStepGeneral->parent.offset = offset;                
-            }
-        }
-	}
-
-	return;
-}*/
-
 static void setupRootPattern()
 {
 	rootPattern.isRoot = TRUE;
@@ -73,29 +15,6 @@ static void teardownPattern(pattern_t *pattern)
 {
 	//TODO
 }
-
-/*static pattern_t *createPattern(pattern_t *parent, uint8_t channel,
-  patternType_t type, uint8_t parameter)
-{
-	pattern_t *result = calloc(1, sizeof(pattern_t));
-
-	pthread_mutex_init(&(result->mutex), NULL);
-
-	result->parent = parent;
-	result->children = NULL;
-	result->userStepsPerBar =
-	  (parent == NULL) ? MAX_USERSTEPS_PER_BAR :
-	  parent->userStepsPerBar;
-	result->numberOfBars =
-	  (parent == NULL) ? 1 :
-	  parent->numberOfBars;
-	result->channel = channel;
-	result->type = type;
-
-	initialisePattern(result);
-
-	return result;
-}*/
 
 static void setupSequencer(char *portString, err_t *e)
 {
@@ -145,19 +64,19 @@ static void setupNotesOff(void)
 
 static void teardownNotesOff(void)
 {
-	g_slist_free(notesOff.value); \
+	g_slist_free((GSList *) notesOff.value);
 }
 
 static void teardownSyncEvents(void)
 {
 	void freeSyncEvents(syncEvent_t *syncEvent) {
 		if ((syncEvent != NULL)&&(syncEvent->next != NULL)) {
-			freeSyncEvents(syncEvent->next);
+			freeSyncEvents((syncEvent_t *) syncEvent->next);
 		}
 		free(syncEvent);
 	}
 
-	freeSyncEvents(syncEvents.queue.head);
+	freeSyncEvents((syncEvent_t *) syncEvents.queue.head);
 	pthread_cond_destroy(((pthread_cond_t *) &(syncEvents.wakeupConsumers)));
 	pthread_mutex_destroy(((pthread_mutex_t *) &(syncEvents.mutex)));
 }
@@ -317,6 +236,7 @@ int main(int argc, char *argv[])
 	terror(setup(portString, e))
 
 	gtkFunction(argc, argv);
+	//guiTest(100000000);
 
 finish:
 	teardown();

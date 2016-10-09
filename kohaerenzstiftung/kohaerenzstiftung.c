@@ -1,3 +1,13 @@
+/*
+ ============================================================================
+ Name        : kohaerenzstiftung.c
+ Author      : Martin Knappe (martin.knappe@gmail.com)
+ Version     : 0.1
+ Copyright   : Your copyright notice
+ Description : Simple helper library.
+ ============================================================================
+ */
+
 #include "kohaerenzstiftung.h"
 
 #include <stdio.h>
@@ -9,8 +19,71 @@
 #include <fcntl.h>
 #include <errno.h>
 
-FILE *outFile = NULL;
-FILE *errFile = NULL;
+#define haveOutput() \
+  ((outPath[0] != '\0')||(errPath[0] != '\0'))
+
+static char outPath[PATH_MAX] = { '\0' };
+static char errPath[PATH_MAX] = { '\0' };
+static gboolean atExitCalled = FALSE;
+static FILE *outFile = NULL;
+static FILE *errFile = NULL;
+
+
+static void closeFiles(void)
+{
+	if ((outFile != NULL)&&(outFile != stdout)) {
+		fclose(outFile); outFile = NULL;
+	}
+	if ((errFile != NULL)&&(errFile != stderr)) {
+		fclose(errFile); errFile = NULL;
+	}
+}
+
+static FILE *openLogFile(char *path, FILE *alternative)
+{
+
+	FILE *result = alternative;
+
+	if (!haveOutput()) {
+		goto finish;
+	}
+
+	result = fopen(path, "a");
+	if (result == NULL) {
+		result = alternative;
+	} else {
+		if (!atExitCalled) {
+			atexit(&closeFiles);
+			atExitCalled = TRUE;
+		}
+	}
+finish:
+	return result;
+}
+
+#define MAX_LOGFILE_SIZE 1000000
+
+#define getXFile(fname, sVar, alt, path) \
+FILE *fname(void) \
+{ \
+	struct stat statBuf; \
+	if ((sVar != NULL)&&(sVar != alt)) { \
+		fflush(sVar); \
+		if (stat(path, &statBuf) == 0) { \
+			if (statBuf.st_size > MAX_LOGFILE_SIZE) { \
+				fclose(sVar); sVar = NULL; \
+				unlink(path); \
+			} \
+		} \
+	} \
+	if (sVar == NULL) { \
+		sVar = openLogFile(path, alt); \
+	} \
+	return sVar; \
+}
+
+getXFile(getErrFile, errFile, stderr, errPath)
+getXFile(getOutFile, outFile, stdout, outPath)
 
 char *err2string(err_t *e)
 {
@@ -43,7 +116,6 @@ char *strrstr(const char *haystack, const char *needle)
 			break;
 		}
 	}
-
 finish:
 	return result;
 }
@@ -118,38 +190,10 @@ finish:
 	return result;
 }
 
-void closeOutput()
-{
-	if (outFile != NULL) {
-		fclose(outFile);
-	}
-	if (errFile != NULL) {
-		fclose(errFile);
-	}
-}
-
 void setOutput(char *out, char *error, err_t *e)
 {
-	FILE *o = NULL;
-	FILE *er = NULL;
-
-	o = fopen(out, "a");
-	terror(failIfFalse(o != NULL))
-
-	er = fopen(error, "a");
-	terror(failIfFalse(er != NULL))
-
-	outFile = o; o = NULL;
-	errFile = er; er = NULL;
-
-finish:
-	if (o != NULL) {
-		fclose(o);
-	}
-	if (er != NULL) {
-		fclose(er);
-	}
-	return;
+	strncpy(outPath, out, sizeof(outPath));
+	strncpy(errPath, error, sizeof(errPath));
 }
 
 void daemonize(err_t *e)
@@ -195,4 +239,38 @@ finish:
 		close(fdErr);
 	}
 	return;
+}
+
+char *readFile(char *path, err_t *e)
+{
+	FILE *file = NULL;
+	char buffer[10];
+	size_t justRead = 0;
+	GString *gString = NULL;
+	char *result = NULL;
+	size_t readSoMany = (sizeof(buffer) - 1);
+
+	gString = g_string_new("");
+
+	terror(failIfFalse((file = fopen(path, "r")) != NULL))
+	for(;;) {
+		justRead = fread(buffer, 1, readSoMany, file);
+		if (justRead < 1) {
+			terror(failIfFalse(feof(file)))
+					break;
+		}
+		buffer[justRead] = '\0';
+		g_string_append(gString, buffer);
+	}
+
+	result = gString->str;
+
+finish:
+	if (gString != NULL) {
+		g_string_free(gString, (result == NULL));
+	}
+	if (file != NULL) {
+		fclose(file);
+	}
+	return result;
 }

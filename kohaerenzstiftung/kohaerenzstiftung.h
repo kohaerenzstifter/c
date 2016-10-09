@@ -1,19 +1,11 @@
-/*
- * kohaerenzstiftung.h
- *
- *  Created on: Feb 17, 2013
- *      Author: Martin Knappe
- */
-
 #ifndef KOHAERENZSTIFTUNG_H_
 #define KOHAERENZSTIFTUNG_H_
 
 #include <glib.h>
 #include <stdio.h>
-
-extern FILE *outFile;
-
-extern FILE *errFile;
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 typedef struct _err {
 	gboolean failed;
@@ -31,20 +23,19 @@ typedef struct _err {
 
 #define defineError() \
 	err_t error; \
-	{ \
-		if (e == NULL) { \
-			e = &error; \
-			initErr(e); \
-		} \
+	if (e == NULL) { \
+		e = &error; \
+		initErr(e); \
 	}
 
 #define initErr(e) e->failed = FALSE;
 
 #define hasFailed(e) (e->failed)
+
 #define terror(c) do { \
 		c; \
 		if (hasFailed(e)) { \
-			FILE *file = (errFile != NULL) ? errFile : stderr; \
+			FILE *file = getErrFile(); \
 			fprintf(file, "code %s in %s:%d failed: %s\n", #c, \
 					__FILE__, __LINE__, err2string(e)); \
 			goto finish; \
@@ -67,7 +58,10 @@ void daemonize(err_t *e);
 
 void setOutput(char *out, char *error, err_t *e);
 
-void closeOutput();
+char *readFile(char *path, err_t *e);
+
+FILE *getErrFile(void);
+FILE *getOutFile(void);
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
 

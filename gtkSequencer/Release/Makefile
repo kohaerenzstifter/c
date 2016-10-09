@@ -1,10 +1,14 @@
 USER_OBJS := libkohaerenzstiftung.a
 OBJS := ../src/main.o ../src/output.o ../src/input.o \
-  ../src/table.o ../src/gtk.o
+  ../src/table.o ../src/gtk.o ../src/guiTest.o ../src/gui.o
 LIBS := -ldl `pkg-config --libs glib-2.0` `pkg-config --libs gtk+-3.0` \
   -lasound -pthread -lm
 
-CFLAGS = -g -Wall -Werror `pkg-config --cflags glib-2.0` \
+CFLAGS = -O0 -g -Wall -Werror `pkg-config --cflags glib-2.0` \
+  `pkg-config --cflags gtk+-3.0` -I../../kohaerenzstiftung/ \
+  -Wno-deprecated-declarations
+
+#CFLAGS = -O0 -g -Wall -Werror `pkg-config --cflags glib-2.0` \
   `pkg-config --cflags gtk+-3.0` -I../../kohaerenzstiftung/ \
   -Wno-deprecated-declarations
 

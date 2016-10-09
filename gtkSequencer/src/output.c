@@ -1,6 +1,14 @@
 #include "gtkSequencer.h"
 
-static noteEvent_t *pendingOff = NULL;
+/*static void printNotesOff(char *addDelete, noteEvent_t *noteEvent)
+{
+	printf("after %s %p: ", addDelete, noteEvent);
+	for (GSList *cur = (GSList *) notesOff.value; cur != NULL; cur = g_slist_next(cur)) {
+		noteEvent = cur->data;
+		printf("%p ", noteEvent);
+	}
+	printf("\n");
+}*/
 
 void *outputFunction(void *param)
 {
@@ -21,7 +29,8 @@ void *outputFunction(void *param)
 		}
 
 		result = (syncEvents.queue.last != NULL) ?
-		  syncEvents.queue.last->next : syncEvents.queue.head;
+		  (syncEvent_t *) syncEvents.queue.last->next :
+		  (syncEvent_t *) syncEvents.queue.head;
 		if (result == NULL) {
 			if (maySleep) {
 				if (adjustSleep) {
@@ -60,7 +69,7 @@ void *outputFunction(void *param)
 			if (syncEvents.queue.head == NULL) {
 				syncEvents.queue.tail = NULL;
 			}
-			free(syncEvents.queue.last);
+			free((syncEvent_t *) syncEvents.queue.last);
 		}
 		syncEvents.queue.last = result;
 
@@ -79,28 +88,40 @@ finish:
 
 		if (noteEventStep->offNoteEvent != NULL) {
 		    if (pendingOff != NULL) {
-				pendingOff->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF;
-			    snd_seq_event_output(sequencer.value, pendingOff->noteValue->snd_seq_event);
+				noteValue_t *noteValue = (noteValue_t *) pendingOff->noteValue;
+				snd_seq_event_t *snd_seq_event = (snd_seq_event_t *) noteValue->snd_seq_event;
+				snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF;
+			    snd_seq_event_output(sequencer.value,
+				  (snd_seq_event_t *) snd_seq_event);
 			    notesOff.value =
-			      g_slist_delete_link(notesOff.value, pendingOff->off.noteOffLink);
+			      (GSList *) g_slist_delete_link((GSList *) notesOff.value,
+				  (GSList *) pendingOff->off.noteOffLink);
+				//printNotesOff("delete", (noteEvent_t *) pendingOff);
 			    pendingOff->off.noteOffLink = NULL;
 			    pendingOff = NULL;
-		    }
-		    if (noteEventStep->onNoteEvent == NULL) {
-				noteEventStep->offNoteEvent->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF;
-			    snd_seq_event_output(sequencer.value, noteEventStep->offNoteEvent->noteValue->snd_seq_event);
-			    notesOff.value =
-			      g_slist_delete_link(notesOff.value, noteEventStep->offNoteEvent->off.noteOffLink);
-			    noteEventStep->offNoteEvent->off.noteOffLink = NULL;
-		    } else {
-		        pendingOff = noteEventStep->offNoteEvent;
-		    }
+		    } 
+		    if (noteEventStep->offNoteEvent->off.noteOffLink != NULL) {
+				if (noteEventStep->onNoteEvent == NULL) {
+					noteEventStep->offNoteEvent->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF;
+					snd_seq_event_output(sequencer.value,
+					  (snd_seq_event_t *) noteEventStep->offNoteEvent->noteValue->snd_seq_event);
+					notesOff.value =
+					g_slist_delete_link((GSList *) notesOff.value,
+					  (GSList *) noteEventStep->offNoteEvent->off.noteOffLink);
+					//printNotesOff("delete", (noteEvent_t *) noteEventStep->offNoteEvent);
+					noteEventStep->offNoteEvent->off.noteOffLink = NULL;
+				} else {
+					pendingOff = (struct noteEvent *) noteEventStep->offNoteEvent;
+				}
+			}
 		}
 		if (noteEventStep->onNoteEvent != NULL) {
 			noteEventStep->onNoteEvent->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEON;
-			snd_seq_event_output(sequencer.value, noteEventStep->onNoteEvent->noteValue->snd_seq_event);
+			snd_seq_event_output(sequencer.value,
+			  (snd_seq_event_t *) noteEventStep->onNoteEvent->noteValue->snd_seq_event);
 			notesOff.value = noteEventStep->onNoteEvent->on.offNoteEvent->off.noteOffLink =
-			  g_slist_prepend(notesOff.value, noteEventStep->onNoteEvent->on.offNoteEvent);
+			  g_slist_prepend((GSList *) notesOff.value, (GSList *) noteEventStep->onNoteEvent->on.offNoteEvent);
+			//printNotesOff("add", (noteEvent_t *) noteEventStep->onNoteEvent->on.offNoteEvent);
 		}
 	
 finish:
@@ -113,14 +134,13 @@ finish:
 			goto finish;
 		}
 
-		snd_seq_event_output(sequencer.value, controllerEventStep->value);
+		snd_seq_event_output(sequencer.value, (snd_seq_event_t *) controllerEventStep->value);
 
 finish:
 		return;
 	}
 
 	void performStep(pattern_t *pattern, uint64_t eventStep) {
-
 		uint32_t factor = 0;
 		uint32_t numberOfEventSteps = 0;
 		uint32_t idx = 0;
@@ -130,7 +150,7 @@ finish:
 		uint32_t userStepsPerBar = 0;
 		uint32_t eventStepsPerBar = 0;
 
-		for (cur = pattern->children; cur != NULL; cur = g_slist_next(cur)) {
+		for (cur = (GSList *) pattern->children; cur != NULL; cur = g_slist_next(cur)) {
 			pattern_t *pattern = cur->data;
 			performStep(pattern, eventStep);
 		}
@@ -156,9 +176,11 @@ finish:
 		idx = (eventStep / factor) % numberOfEventSteps;
 
 		if (pattern->real.type == PATTERNTYPE_NOTE) {
-			performNoteEventStep(&(pattern->real.note.steps.event[idx]));
+			performNoteEventStep((noteEventStep_t *)
+			  &(pattern->real.note.steps.event[idx]));
 		} else {
-			performControllerEventStep(&(pattern->real.controller.steps.event[idx]));
+			performControllerEventStep((controllerEventStep_t *)
+			  &(pattern->real.controller.steps.event[idx]));
 		}
 finish:
 		return;
@@ -168,7 +190,8 @@ finish:
 		noteEvent_t *noteEvent = data;
 
 		noteEvent->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF; ////TODO: SEGFAULT
-		snd_seq_event_output(sequencer.value, noteEvent->noteValue->snd_seq_event);
+		snd_seq_event_output(sequencer.value,
+		  (snd_seq_event_t *) noteEvent->noteValue->snd_seq_event);
 		noteEvent->off.noteOffLink = NULL;
 	}
 
@@ -279,9 +302,9 @@ finish:
 #define NOTES_OFF() \
 	do { \
 		pthread_mutex_lock(&mutex); \
-		g_slist_foreach(notesOff.value, noteOff, NULL); \
+		g_slist_foreach((GSList *) notesOff.value, noteOff, NULL); \
 		snd_seq_drain_output(sequencer.value); \
-		g_slist_free(notesOff.value); \
+		g_slist_free((GSList *) notesOff.value); \
 		notesOff.value = NULL; \
 		pthread_mutex_unlock(&mutex); \
 	} while (FALSE);
@@ -299,7 +322,7 @@ finish:
 			} else if (haveTick||havePace) {
 			    pthread_mutex_lock(&mutex);
 				performStep(((pattern_t *) &rootPattern), nextEventStep);
-				gtkSignalStep(nextEventStep);
+				//gtkSignalStep(nextEventStep);
 				snd_seq_drain_output(sequencer.value);
 
 		        pthread_mutex_unlock(&mutex);

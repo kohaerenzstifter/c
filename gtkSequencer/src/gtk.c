@@ -1,4 +1,6 @@
-#include "gtkSequencer.h"
+#include "gui.h"
+
+static uint32_t lockCount = 0;
 
 static struct {
 	GtkWidget *window;
@@ -24,9 +26,6 @@ static struct {
 	GtkWidget *loadButton;
 	GtkWidget *storeButton;
 } appFrame;
-
-
-static uint32_t lockCount = 0;
 
 static struct {
 	pattern_t *pattern;
@@ -310,347 +309,45 @@ static void addNumberPicker(GtkWidget *contentArea, int initial)
 
 static void renderPattern();
 
-#define LOCK() \
-  do { \
-	if (lockCount < 1) { \
-	  pthread_mutex_lock(&mutex); \
-	} \
-	lockCount++; \
-  } while (FALSE);
-
-#define UNLOCK() \
-  do { \
-	lockCount--; \
-	if (lockCount == 0) { \
-	  pthread_mutex_unlock(&mutex); \
-	} \
-  } while (FALSE);
-
-static void setDummyStep(dummyUserStep_t *step, gboolean value)
-{
-	LOCK();
-
-	step->set = value;
-
-	UNLOCK();
-
-}
 
 static void onDummyStep(GtkWidget *widget, gpointer data)
 {
 	dummyUserStep_t *step = data;
 
-	setDummyStep(step, (!step->set));
+	setDummyStep(step, (!step->set), lockCount);
 
 	renderPattern();
-}
-
-static snd_seq_event_t *getAlsaEvent()
-{
-	snd_seq_event_t *result = calloc(1, sizeof(snd_seq_event_t));
-
-	snd_seq_ev_clear(result);
-	snd_seq_ev_set_direct(result);
-	result->dest = port;
-
-	return result;
-}
-
-static void setControllerStep(pattern_t *pattern,
-  controllerUserStep_t *step, GSList *value)
-{
-	controllerValue_t *controllerValue = NULL;
-	uint32_t idx = step - pattern->real.controller.steps.user;
-
-	LOCK();
-
-	step->value = value;
-
-	if (value == NULL) {
-		step->event = NULL;
-		goto finish;
-	}
-
-	controllerValue = value->data;
-	step->event = &(pattern->real.controller.steps.event[idx].value);
-	*step->event = controllerValue->event;
-
-finish:
-	UNLOCK();
 }
 
 static void onControllerStep(GtkWidget *widget, gpointer data)
 {
 	controllerUserStep_t *step = data;
 
-	GSList *value = (step->value == NULL) ? current.pattern->real.controller.values :
-	  g_slist_next(step->value);
+	GSList *value = (step->value == NULL) ?
+	  (GSList *) current.pattern->real.controller.values :
+	  (GSList *) g_slist_next(step->value);
 
-	setControllerStep(current.pattern, step, value);
+	setControllerStep(current.pattern, step, value, lockCount);
 	renderPattern();
-}
-
-static void unsoundNoteEvent(noteEvent_t *off)
-{
-	if (off->off.noteOffLink == NULL) {
-		goto finish;
-	}
-
-	off->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF;
-	snd_seq_event_output(sequencer.value, off->noteValue->snd_seq_event);
-	snd_seq_drain_output(sequencer.value);
-	notesOff.value =
-	  g_slist_delete_link(notesOff.value, off->off.noteOffLink);
-	off->off.noteOffLink = NULL;
-
-finish:
-	return;
-}
-
-static void redirect(uint32_t startIdx, noteEvent_t *cmp, noteEvent_t *set)
-{
-	uint32_t numberSteps =
-	  (current.pattern->real.userStepsPerBar *
-	  current.pattern->real.bars);
-
-	for (uint32_t i = startIdx; i < numberSteps; i++) {
-		if (current.pattern->real.note.steps.user[i].onNoteEvent != cmp) {
-			break;
-		}
-		current.pattern->real.note.steps.user[i].onNoteEvent = set;
-	}
-}
-
-static void unsetNoteStep(pattern_t *pattern, noteUserStep_t *step)
-{
-	uint32_t userIdx = step - pattern->real.note.steps.user;
-	uint32_t eventIdx = userIdx * NOTEEVENTSTEPS_PER_USERSTEP;
-	noteUserStep_t *previous = (userIdx < 1) ? NULL :
-	  &pattern->real.note.steps.user[userIdx - 1];
-	noteUserStep_t *next =
-	  (userIdx >= (pattern->real.userStepsPerBar - 1)) ? NULL :
-	  &pattern->real.note.steps.user[userIdx + 1];
-
-	void moveStepOnToNext() {
-		noteEventStep_t *isNoteOnEventStep = step->onNoteEvent->noteEventStep;
-		noteEventStep_t *mustNoteOnEventStep =
-		  isNoteOnEventStep + NOTEEVENTSTEPS_PER_USERSTEP;
-
-		step->onNoteEvent->noteEventStep = mustNoteOnEventStep;
-
-		mustNoteOnEventStep->onNoteEvent = isNoteOnEventStep->onNoteEvent;
-		isNoteOnEventStep->onNoteEvent = NULL;
-	}
-
-	void removeNote() {
-		step->onNoteEvent->on.offNoteEvent->noteEventStep->offNoteEvent = NULL;
-		free(step->onNoteEvent->on.offNoteEvent);
-		step->onNoteEvent->noteEventStep->onNoteEvent = NULL;
-		free(step->onNoteEvent);
-	}
-
-	void previousNoteOff() {
-		noteEvent_t *noteEvent = previous->onNoteEvent->on.offNoteEvent;
-
-		step->onNoteEvent->on.offNoteEvent->noteEventStep->offNoteEvent = NULL;
-
-		noteEvent->noteEventStep =
-		  &(pattern->real.note.steps.event[eventIdx]);
-		noteEvent->noteEventStep->offNoteEvent = noteEvent;
-	}
-
-	void nextNoteOn(noteEventStep_t *offStep, noteValue_t *noteValue) {
-		noteEvent_t *onNoteEvent = NULL;
-		noteEvent_t *noteOffEvent = NULL;
-
-		noteEventStep_t *eventStep =
-		  &(pattern->real.note.steps.event[eventIdx]);
-		noteEventStep_t *mustStep = eventStep + NOTEEVENTSTEPS_PER_USERSTEP;
-
-		onNoteEvent = calloc(1, sizeof(noteEvent_t));
-		onNoteEvent->noteValue = noteValue;
-		onNoteEvent->noteEventStep = mustStep;
-
-		noteOffEvent = calloc(1, sizeof(noteEvent_t));
-		noteOffEvent->noteValue = noteValue;
-		noteOffEvent->noteEventStep = offStep;
-
-		onNoteEvent->on.offNoteEvent = noteOffEvent;
-
-		redirect((userIdx + 1), next->onNoteEvent, onNoteEvent);
-
-		mustStep->onNoteEvent = onNoteEvent;
-		offStep->offNoteEvent = noteOffEvent;
-		eventStep->onNoteEvent = NULL;
-
-	}
-
-	if (step->onNoteEvent == NULL) {
-		goto finish;
-	}
-
-	if ((previous == NULL)||(step->onNoteEvent != previous->onNoteEvent)) {
-		if ((next != NULL)&&(step->onNoteEvent == next->onNoteEvent)) {
-			moveStepOnToNext();
-		} else {
-			removeNote();
-		}
-	} else {
-		noteEventStep_t *offStep = previous->onNoteEvent->on.offNoteEvent->noteEventStep;
-		previousNoteOff();
-		if ((next != NULL)&&(step->onNoteEvent == next->onNoteEvent)) {
-			nextNoteOn(offStep, step->value->data);
-		}
-	}
-
-
-finish:
-	step->onNoteEvent = NULL;
-}
-
-static void doSetNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep)
-{
-	noteEvent_t *onNoteEvent = NULL;
-	noteEvent_t *offNoteEvent = NULL;
-	noteValue_t *noteValue = noteUserStep->value->data;
-	uint32_t userIdx = noteUserStep - pattern->real.note.steps.user;
-	uint32_t eventIdx = userIdx * NOTEEVENTSTEPS_PER_USERSTEP;
-	noteUserStep_t *previous = (userIdx < 1) ? NULL :
-	  &pattern->real.note.steps.user[userIdx - 1];
-	noteUserStep_t *next =
-	  (userIdx >= (pattern->real.userStepsPerBar - 1)) ? NULL :
-	  &pattern->real.note.steps.user[userIdx + 1];
-
-	if ((previous != NULL)&&(previous->slide)&&
-	  (previous->value != NULL)) {
-		noteValue_t *previousNoteValue = previous->value->data;
-		if ((noteValue->tone == previousNoteValue->tone)&&
-		  (noteValue->sharp == previousNoteValue->sharp)&&
-		  (noteValue->octave == previousNoteValue->octave)) {
-			onNoteEvent = previous->onNoteEvent;
-			onNoteEvent->on.offNoteEvent->noteEventStep->offNoteEvent = NULL;
-			free(onNoteEvent->on.offNoteEvent);
-		}
-	}
-
-	if (onNoteEvent == NULL) {
-		onNoteEvent = calloc(1, sizeof(noteEvent_t));
-		onNoteEvent->noteEventStep =
-		  &(pattern->real.note.steps.event[eventIdx]);
-		onNoteEvent->noteEventStep->onNoteEvent = onNoteEvent;
-		onNoteEvent->noteValue = noteUserStep->value->data;
-	}
-
-	if ((next != NULL)&&(noteUserStep->slide)&&
-	  (next->value != NULL)) {
-		noteValue_t *nextNoteValue = next->value->data;
-		if ((noteValue->tone == nextNoteValue->tone)&&
-		  (noteValue->sharp == nextNoteValue->sharp)&&
-		  (noteValue->octave == nextNoteValue->octave)) {
-			offNoteEvent = next->onNoteEvent->on.offNoteEvent;
-			next->onNoteEvent->noteEventStep->onNoteEvent = NULL;
-			free(next->onNoteEvent);
-			redirect((userIdx + 1), next->onNoteEvent, onNoteEvent);
-		}
-	}
-	if (offNoteEvent == NULL) {
-		offNoteEvent = calloc(1, sizeof(noteEvent_t));
-		eventIdx += NOTEEVENTSTEPS_PER_USERSTEP;
-		if (!noteUserStep->slide) {
-			eventIdx--;
-		}
-		offNoteEvent->noteEventStep =
-		  &(pattern->real.note.steps.event[eventIdx]);
-		offNoteEvent->noteEventStep->offNoteEvent = offNoteEvent;
-		offNoteEvent->noteValue = noteUserStep->value->data;
-	}
-
-	noteUserStep->onNoteEvent = onNoteEvent;
-	onNoteEvent->on.offNoteEvent = offNoteEvent;
-}
-
-static void unsoundPattern()
-{
-	if (current.pattern->real.type != PATTERNTYPE_NOTE) {
-		goto finish;
-	}
-	for (uint32_t i = 0; i < current.pattern->real.bars; i++) {
-		for (uint32_t j = 0; j < current.pattern->real.userStepsPerBar; j++) {
-			uint32_t idx = (i * current.pattern->real.userStepsPerBar) + j;
-			if (current.pattern->real.note.steps.event[idx].onNoteEvent == NULL) {
-				continue;
-			}
-			unsoundNoteEvent(current.pattern->real.note.steps.event[idx].onNoteEvent->on.offNoteEvent);
-		}
-	}
-
-finish:
-	return;
-}
-
-static void setNoteStep(pattern_t *pattern, noteUserStep_t *step, GSList *value)
-{
-	gboolean slide = step->slide;
-
-	LOCK();
-
-	unsoundPattern();
-
-	unsetNoteStep(pattern, step);
-
-	step->value = value;
-	step->slide = (value != NULL) ? slide : FALSE;
-
-	if (step->value == NULL) {
-		goto finish;
-	}
-
-	doSetNoteStep(pattern, step);
-
-finish:
-	UNLOCK();
 }
 
 static void onNoteStep(GtkWidget *widget, gpointer data)
 {
 	noteUserStep_t *step = data;
-	GSList *value = (step->value == NULL) ? current.pattern->real.note.values :
-	  g_slist_next(step->value);
+	GSList *value = (step->value == NULL) ?
+	  (GSList *) current.pattern->real.note.values :
+	  (GSList *) g_slist_next(step->value);
 
-	setNoteStep(current.pattern, step, value);
+	setNoteStep(current.pattern, step, value, lockCount);
 
 	renderPattern();
-}
-
-
-static void setNoteSlide(pattern_t *pattern, noteUserStep_t *step, gboolean slide)
-{
-	GSList *value = step->value;
-
-	LOCK();
-
-	unsoundPattern();
-
-	unsetNoteStep(pattern, step);
-
-	step->value = value;
-	step->slide = slide;
-
-	if (step->value == NULL) {
-		goto finish;
-	}
-
-	doSetNoteStep(pattern, step);
-
-finish:
-	UNLOCK();
 }
 
 static void onNoteSlide(GtkWidget *widget, gpointer data)
 {
 	noteUserStep_t *step = data;
 
-	setNoteSlide(current.pattern, step, (!step->slide));
+	setNoteSlide(current.pattern, step, (!step->slide), lockCount);
 
 	renderPattern();
 }
@@ -739,7 +436,7 @@ static void addNoteStep(noteUserStep_t *step, uint32_t i,
 	GtkWidget *slideButton = NULL;
 	GtkWidget *verticalBox = NULL;
 	char *stepText = (step->value == NULL) ? "" :
-	  ((noteValue_t *) (step->value->data))->name;
+	  (char *) ((noteValue_t *) (step->value->data))->name;
 	char *slideText = (step->value == NULL) ? "-" :
 	  step->slide ? "!SLIDE" : "SLIDE";
 
@@ -760,7 +457,7 @@ static void addControllerStep(controllerUserStep_t *step, uint32_t i,
 	GtkWidget *button = NULL;
 	GtkWidget *verticalBox = NULL;
 	char *text = (step->value == NULL) ? "" :
-	  ((controllerValue_t *) (step->value->data))->name;
+	  (char *) ((controllerValue_t *) (step->value->data))->name;
 
 	verticalBox = addVerticalStepBox(i, shadesSize, stepsPerBar, shades);
 	button = getButton(text, onControllerStep, step);
@@ -773,7 +470,7 @@ static void addControllerStep(controllerUserStep_t *step, uint32_t i,
 void *getParentStep(pattern_t *pattern, uint32_t stepIdx)
 {
 	void *result = NULL;
-	pattern_t *parent = pattern->real.parent;
+	pattern_t *parent = (pattern_t *) pattern->real.parent;
 	uint32_t factor = 0;
 	uint32_t steps = 0;
 
@@ -873,18 +570,6 @@ static void renderRealPattern()
 	free(shades);
 }
 
-static void setSteps(pattern_t *pattern)
-{
-	void **userSteps = ADDR_USER_STEPS(pattern);
-
-	void **eventSteps = ADDR_EVENT_STEPS(pattern);
-
-	*userSteps = calloc(NUMBER_USERSTEPS(pattern), SIZE_USERSTEP(pattern));
-	if (eventSteps != NULL) {
-		*eventSteps = calloc(NUMBER_EVENTSTEPS(pattern), SIZE_EVENTSTEP(pattern));
-	}
-}
-
 static void renderPattern()
 {
 	pthread_mutex_lock(&(signalling.mutex));
@@ -959,55 +644,11 @@ static GtkWidget *getNumberPickerDialog(void (*pickValue)(int type),
 	return result;
 }
 
-static void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t userStepsPerBar)
-{
-	uint32_t haveBars = pattern->real.bars;
-	uint32_t haveUserStepsPerBar = pattern->real.userStepsPerBar;
-	uint32_t stepDivisor = (userStepsPerBar <= haveUserStepsPerBar) ?
-	  1 : (userStepsPerBar / haveUserStepsPerBar);
-	uint32_t stepMultiplier = (userStepsPerBar >= haveUserStepsPerBar) ?
-	  1 : (haveUserStepsPerBar / userStepsPerBar);
-	void *userSteps = *(ADDR_USER_STEPS(pattern));
-	void **foo = ADDR_EVENT_STEPS(pattern);
-	void *eventSteps = NULL;
-	if (foo != NULL) {
-		eventSteps = *(foo);
-	}
-
-	LOCK();
-
-	unsoundPattern();
-
-	current.pattern->real.bars = bars;
-	current.pattern->real.userStepsPerBar = userStepsPerBar;
-	setSteps(current.pattern);
-	for (uint32_t i = 0; i < bars; i++) {
-		for (uint32_t j = 0; j < userStepsPerBar; j += stepDivisor) {
-			uint32_t targetStep = (i * userStepsPerBar) + j;
-			uint32_t sourceBar = i % haveBars;
-			uint32_t sourceStep = j / stepDivisor;
-			sourceStep *= stepMultiplier;
-			sourceStep += (sourceBar * haveUserStepsPerBar);
-			SET_STEP_FROM_STEP(current.pattern,
-			  USERSTEP(current.pattern, userSteps, sourceStep),
-			  USERSTEP2(current.pattern, targetStep));
-		}
-	}
-	UNLOCK();
-
-	if ((userSteps) != NULL) {
-		free((userSteps));
-	}
-	if ((eventSteps) != NULL) {
-		free((eventSteps));
-	}
-}
-
 static void doSetBarsCallback(GtkWidget *widget, gpointer data)
 {
 	adjustSteps(current.pattern,
 	  atoi(gtk_label_get_text(GTK_LABEL(numberpicker.label))),
-	  current.pattern->real.userStepsPerBar);
+	  current.pattern->real.userStepsPerBar, lockCount);
 
 	if (current.bar >= current.pattern->real.bars) {
 		current.bar = current.pattern->real.bars - 1;
@@ -1032,7 +673,7 @@ static void doSetStepsPerBarCallback(GtkWidget *widget, gpointer data)
 {
 	adjustSteps(current.pattern,
 	  current.pattern->real.bars,
-	  atoi(gtk_label_get_text(GTK_LABEL(numberpicker.label))));
+	  atoi(gtk_label_get_text(GTK_LABEL(numberpicker.label))), lockCount);
 	destroyDialog();
 	renderPattern();
 }
@@ -1099,47 +740,6 @@ static struct {
 
 static GtkWidget *getValuesDialog(void);
 
-static void setAlsaNoteEvent(uint8_t channel, noteValue_t *noteValue)
-{
-	int32_t note2Int(noteValue_t *noteValue) {
-		int32_t result = 0;
-		struct {
-			char tone;
-			int32_t value;
-		} values[] = {
-			{'c', 24},
-			{'d', 26},
-			{'e', 28},
-			{'f', 29},
-			{'g', 31},
-			{'a', 33},
-			{'b', 35}
-		};
-	
-		for (uint32_t i = 0; i < sizeof(values)/sizeof(values[0]); i++) {
-			if (values[i].tone == noteValue->tone) {
-				result = values[i].value;
-				break;
-			}
-		}
-	
-		if (noteValue->sharp) {
-			result++;
-		}
-	
-		result += 12 * noteValue->octave;
-		
-		return result;
-	}
-
-	int32_t note = note2Int(noteValue);
-
-	snd_seq_ev_clear(noteValue->snd_seq_event);
-	snd_seq_ev_set_direct(noteValue->snd_seq_event);
-	snd_seq_ev_set_noteon(noteValue->snd_seq_event, (channel - 1), note, 127);
-	noteValue->snd_seq_event->dest = port;
-}
-
 static void doSetupNoteValueCallback(GtkWidget *widget, gpointer data)
 {
 	noteValue_t *noteValue = data;
@@ -1148,7 +748,6 @@ static void doSetupNoteValueCallback(GtkWidget *widget, gpointer data)
 	  gtk_spin_button_get_value_as_int(GTK_SPIN_BUTTON(setupvalue.note.octaveSpinButton));
 	gboolean sharp = FALSE;
 	const char *name = gtk_entry_get_text(GTK_ENTRY(setupvalue.nameEntry));
-	char namebuffer[50];
 
 	for (uint32_t i = 0; i < ARRAY_SIZE(tones); i++) {
 		if (gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(tones[i].radio))) {
@@ -1161,26 +760,7 @@ static void doSetupNoteValueCallback(GtkWidget *widget, gpointer data)
 		}
 	}
 
-	if (noteValue == NULL) {
-		noteValue = calloc(1, sizeof(noteValue_t));
-		current.pattern->real.note.values =
-		  g_slist_append(current.pattern->real.note.values, noteValue);
-#define NAMEFORMAT "%c%s %d"
-		if (name[0] == '\0') {
-			snprintf(namebuffer, sizeof(namebuffer), NAMEFORMAT, tone, sharp ? "#" : "", octave);
-			name = namebuffer;
-		}
-		noteValue->snd_seq_event = getAlsaEvent();
-	} else {
-		free(noteValue->name);
-	}
-
-	noteValue->tone = tone;
-	noteValue->name = strdup(name);
-	noteValue->octave = octave;
-	noteValue->sharp = sharp;
-
-	setAlsaNoteEvent(current.pattern->real.channel, noteValue);
+	setupNoteValue(current.pattern, name, sharp, octave, tone, noteValue);
 
 	runDialog(getValuesDialog());
 }
@@ -1214,13 +794,13 @@ static void doSetupControllerValueCallback(GtkWidget *widget, gpointer data)
 	if (value == NULL) {
 		value = calloc(1, sizeof(controllerValue_t));
 		current.pattern->real.controller.values =
-		  g_slist_append(current.pattern->real.controller.values, value);
+		  g_slist_append((GSList *) current.pattern->real.controller.values, value);
 		if (name[0] == '\0') {
 			name = intToString(intValue);
 		}
 		value->event = getAlsaEvent();
 	} else {
-		free(value->name);
+		free((char *) value->name);
 	}
 
 	value->value = intValue;
@@ -1234,7 +814,7 @@ static void doSetupControllerValueCallback(GtkWidget *widget, gpointer data)
 
 static GtkWidget *getSetupControllerValueDialog(controllerValue_t *value)
 {
-	char *name = (value == NULL) ? "" : value->name;
+	char *name = (value == NULL) ? "" : (char *) value->name;
 	gdouble curValue = (value == NULL) ? 0 : value->value;
 	GtkWidget *result = getDialog(400, 300);
 	GtkWidget *contentArea = gtk_dialog_get_content_area(GTK_DIALOG(result));
@@ -1277,7 +857,7 @@ static void onSelectTone(void)
 
 static GtkWidget *getSetupNoteValueDialog(noteValue_t *value)
 {
-	char *name = (value == NULL) ? "" : value->name;
+	char *name = (value == NULL) ? "" : (char *) value->name;
 	char tone = (value == NULL) ? tones[0].name : value->tone;
 	int8_t octave = (value == NULL) ? 0 : value->octave;
 	gboolean sharp = (value == NULL) ? FALSE : value->sharp;
@@ -1447,17 +1027,17 @@ static void enterPattern(pattern_t *enterMe)
 
 static void onParent(GtkWidget *widget, gpointer data)
 {
-	enterPattern(current.pattern->real.parent);
+	enterPattern((pattern_t *) current.pattern->real.parent);
 }
 
 static void onTop(GtkWidget *widget, gpointer data)
 {
-	enterPattern(((pattern_t *) &rootPattern));
+	enterPattern((pattern_t *) ((pattern_t *) &rootPattern));
 }
 
 static void enterPatternCallback(GtkWidget *widget, gpointer data)
 {
-	enterPattern(data);
+	enterPattern((pattern_t *) data);
 	destroyDialog();
 }
 
@@ -1472,16 +1052,16 @@ void destroyControllerValueCb(gpointer data, gpointer user_data)
 {
 	controllerValue_t *controllerValue = data;
 
-	free(controllerValue->name);
-	free(controllerValue->event);
+	free((char *) controllerValue->name);
+	free((snd_seq_event_t *) controllerValue->event);
 }
 
 void destroyNoteValuesCb(gpointer data, gpointer user_data)
 {
 	noteValue_t *noteValue = data;
 
-	free(noteValue->name);
-	free(noteValue->snd_seq_event);
+	free((char *) noteValue->name);
+	free((snd_seq_event_t *) noteValue->snd_seq_event);
 }
 
 //TODO: notes off?
@@ -1496,7 +1076,7 @@ static void destroyPattern(pattern_t *pattern, gboolean destroyChildren)
 		goto finish;
 	}
 
-	free(pattern->real.name);
+	free((char *) pattern->real.name);
 	userSteps = ADDR_USER_STEPS(pattern);
 	eventSteps = ADDR_EVENT_STEPS(pattern);
 
@@ -1506,16 +1086,16 @@ static void destroyPattern(pattern_t *pattern, gboolean destroyChildren)
 	}
 
 	if (pattern->real.type == PATTERNTYPE_CONTROLLER) {
-		g_slist_foreach(pattern->real.controller.values,
+		g_slist_foreach((GSList *) pattern->real.controller.values,
 		  destroyControllerValueCb, NULL);
-		g_slist_free(pattern->real.controller.values);
+		g_slist_free((GSList *) pattern->real.controller.values);
 	} else if (pattern->real.type == PATTERNTYPE_NOTE) {
-		g_slist_foreach(pattern->real.note.values,
+		g_slist_foreach((GSList *) pattern->real.note.values,
 		  destroyNoteValuesCb, NULL);
-		g_slist_free(pattern->real.note.values);
+		g_slist_free((GSList *) pattern->real.note.values);
 	}
 
-	g_slist_foreach(pattern->children, destroyPatternCb, NULL);
+	g_slist_foreach((GSList *) pattern->children, destroyPatternCb, NULL);
 
 finish:
 	free(pattern);
@@ -1527,36 +1107,11 @@ static struct {
 	pattern_t *hideMe;
 } patternlist;
 
-static pattern_t *allocatePattern(pattern_t *parent)
-{
-	pattern_t *result = calloc(1, sizeof(pattern_t));
-
-	result->isRoot = (parent == NULL);
-	result->children = NULL;
-	result->real.parent = parent;
-
-	return result;
-}
-
 static pattern_t *createRealPattern(const gchar *name, gint channel,
   patternType_t patternType, gint controller)
 {
-	pattern_t *result = allocatePattern(patternlist.parent);
-
-	result->real.name = strdup(name);
-	result->real.channel = channel;
-
-	result->real.bars =
-	  patternlist.parent->isRoot ? 1 : patternlist.parent->real.bars;
-	result->real.userStepsPerBar =
-	  patternlist.parent->isRoot ? 1 : patternlist.parent->real.userStepsPerBar;
-	PATTERN_TYPE(result) = patternType;
-
-	if (patternType == PATTERNTYPE_CONTROLLER) {
-		result->real.controller.parameter = controller;
-	}
-
-	return result;
+	return createRealPattern2(patternlist.parent, name, channel,
+	  patternType, controller);
 }
 
 
@@ -1589,7 +1144,8 @@ static void doAddPatternCallback(GtkWidget *widget, gpointer data)
 	setSteps(pattern);
 
 	LOCK();
-	patternlist.parent->children = g_slist_append(patternlist.parent->children, pattern);
+	patternlist.parent->children =
+	  g_slist_append((GSList *) patternlist.parent->children, pattern);
 	UNLOCK();
 	renderPattern();
 
@@ -1691,7 +1247,7 @@ static void deletePatternCallback(GtkWidget *widget, gpointer data)
 
 	LOCK();
 	pattern->real.parent->children =
-	  g_slist_delete_link(pattern->real.parent->children, link);
+	  g_slist_delete_link((GSList *) pattern->real.parent->children, link);
 	UNLOCK();
 
 	destroyPattern(pattern, TRUE);
@@ -1717,7 +1273,7 @@ static GtkWidget *getPatternListDialog(pattern_t *hideMe)
 
 	contentArea = gtk_dialog_get_content_area(GTK_DIALOG(result));
 
-	for (cur = patternlist.parent->children; cur != NULL; cur = g_slist_next(cur)) {
+	for (cur = (GSList *) patternlist.parent->children; cur != NULL; cur = g_slist_next(cur)) {
 		pattern_t *child = cur->data;
 		if (child == hideMe) {
 			continue;
@@ -1725,7 +1281,7 @@ static GtkWidget *getPatternListDialog(pattern_t *hideMe)
 		GtkWidget *box = getBox(GTK_ORIENTATION_HORIZONTAL);
 		gtk_box_pack_start(GTK_BOX(contentArea), box, TRUE, TRUE, 0);
 		gtk_box_pack_start(GTK_BOX(box),
-		  gtk_label_new(child->real.name), TRUE, TRUE, 0);
+		  gtk_label_new((char *) child->real.name), TRUE, TRUE, 0);
 		gtk_box_pack_start(GTK_BOX(box),
 		  getButton("Enter", enterPatternCallback, child), TRUE, TRUE, 0);
 		deleteButton = getButton("Delete", deletePatternCallback, cur);
@@ -1757,7 +1313,7 @@ static void onChildren(GtkWidget *widget, gpointer data)
 }
 static void onSiblings(GtkWidget *widget, gpointer data)
 {
-	onPatternList(current.pattern->real.parent, current.pattern);
+	onPatternList((pattern_t *) current.pattern->real.parent, current.pattern);
 
 }
 
@@ -1793,10 +1349,8 @@ static char *onLoadStore(gboolean load)
 
 typedef ssize_t (*readWriteFunc_t)(int fd, void *buf, size_t count);
 
-#define readWriteFd(d,l,f,w,e) readWriteFdReal(d,l,f,w,e,__FUNCTION__, __FILE__, __LINE__)
-
-static void readWriteFdReal(void *data, uint32_t length, int fd,
-  gboolean writ, err_t *e, const char *function, const char *file, const int line)
+static void readWriteFd(void *data, uint32_t length, int fd,
+  gboolean writ, err_t *e)
 {
 	uint32_t pending = length;
 	char *cur = data;
@@ -1825,7 +1379,7 @@ static void loadStoreChildren(GSList **children, int fd, gboolean store,
 
 	if (store) {
 		length = g_slist_length((*children));
-		terror(readWriteFd(&length, sizeof(length), fd, store, e))
+		terror(readWriteFd((void *) &length, sizeof(length), fd, store, e))
 		GSList *cur = NULL;
 		for (cur = (*children); cur !=  NULL; cur = g_slist_next(cur)) {
 			terror(loadStorePattern(((pattern_t **) &(cur->data)),
@@ -1853,7 +1407,7 @@ finish:
 static void loadStoreDummyUserStep(dummyUserStep_t *dummyUserStep, int fd,
   gboolean store, err_t *e)
 {
-	terror(readWriteFd(&(dummyUserStep->set), sizeof(dummyUserStep->set), fd, store, e))
+	terror(readWriteFd((void *) &(dummyUserStep->set), sizeof(dummyUserStep->set), fd, store, e))
 
 finish:
 	return;
@@ -1866,7 +1420,7 @@ static void loadStoreNoteUserStep(pattern_t *pattern, noteUserStep_t *noteUserSt
 	gboolean slide = FALSE;
 
 	if (store) {
-		position = g_slist_position(noteValues, noteUserStep->value);
+		position = g_slist_position((GSList *) noteValues, (GSList *) noteUserStep->value);
 		if (noteUserStep->value != NULL) {
 			slide = noteUserStep->slide;
 		}
@@ -1875,10 +1429,12 @@ static void loadStoreNoteUserStep(pattern_t *pattern, noteUserStep_t *noteUserSt
 	terror(readWriteFd(&slide, sizeof(slide), fd, store, e))
 	terror(readWriteFd(&position, sizeof(position), fd, store, e))
 
-	if ((!store)&&(position > -1)) {
-		setNoteStep(pattern, noteUserStep, g_slist_nth(noteValues , position));
+	if (!store) {
+		if (position > -1) {
+			setNoteStep(pattern, noteUserStep, g_slist_nth(noteValues , position), lockCount);
+		}
+		setNoteSlide(pattern, noteUserStep, slide, lockCount);
 	}
-	setNoteSlide(pattern, noteUserStep, slide);
 
 finish:
 	return;
@@ -1891,14 +1447,14 @@ static void loadStoreControllerUserStep(pattern_t *pattern,
 	gint position = -1;
 
 	if ((store)&&(controllerUserStep->value != NULL)) {
-		position = g_slist_position(controllerValues, controllerUserStep->value);
+		position = g_slist_position((GSList *) controllerValues, (GSList *) controllerUserStep->value);
 	}
 
 	terror(readWriteFd(&position, sizeof(position), fd, store, e))
 
 	if ((!store)&&(position > -1)) {
 		setControllerStep(pattern, controllerUserStep,
-		  g_slist_nth(controllerValues , position));
+		  g_slist_nth(controllerValues , position), lockCount);
 	}
 
 
@@ -1911,7 +1467,7 @@ static void loadStoreDummyPattern(pattern_t **pattern, int fd, gboolean store, e
 	uint32_t steps = (*pattern)->real.userStepsPerBar * (*pattern)->real.bars;
 
 	for (uint32_t i = 0; i < steps; i++) {
-		terror(loadStoreDummyUserStep(&((*pattern)->real.dummy.steps[i]),
+		terror(loadStoreDummyUserStep((dummyUserStep_t *) &((*pattern)->real.dummy.steps[i]),
 		  fd, store, e))
 	}
 
@@ -1950,13 +1506,13 @@ static void loadStoreNoteValue(noteValue_t *noteValue, int fd,
   gboolean store, err_t *e)
 {
 	if (store) {
-		terror(writeStringToFd(noteValue->name, fd, e))
+		terror(writeStringToFd((char *) noteValue->name, fd, e))
 	} else {
 		terror(noteValue->name = readStringFromFd(fd, e))
 	}
-	terror(readWriteFd(&(noteValue->tone), sizeof(noteValue->tone), fd, store, e))
-	terror(readWriteFd(&(noteValue->octave), sizeof(noteValue->octave), fd, store, e))
-	terror(readWriteFd(&(noteValue->sharp), sizeof(noteValue->sharp), fd, store, e))
+	terror(readWriteFd((void *) &(noteValue->tone), sizeof(noteValue->tone), fd, store, e))
+	terror(readWriteFd((void *) &(noteValue->octave), sizeof(noteValue->octave), fd, store, e))
+	terror(readWriteFd((void *) &(noteValue->sharp), sizeof(noteValue->sharp), fd, store, e))
 
 finish:
 	return;
@@ -1966,11 +1522,11 @@ static void loadStoreControllerValue(controllerValue_t *controllerValue, int fd,
   gboolean store, err_t *e)
 {
 	if (store) {
-		terror(writeStringToFd(controllerValue->name, fd, e))
+		terror(writeStringToFd((char *) controllerValue->name, fd, e))
 	} else {
 		terror(controllerValue->name = readStringFromFd(fd, e))
 	}
-	terror(readWriteFd(&(controllerValue->value),
+	terror(readWriteFd((void *) &(controllerValue->value),
 	  sizeof(controllerValue->value), fd, store, e))
 
 finish:
@@ -1980,7 +1536,7 @@ finish:
 static void loadStoreNotePattern(pattern_t **pattern, int fd, gboolean store, err_t *e)
 {
 	uint32_t i = 0;
-	uint32_t noteValues = g_slist_length((*pattern)->real.note.values);
+	uint32_t noteValues = g_slist_length((GSList *) (*pattern)->real.note.values);
 	uint32_t steps = (*pattern)->real.userStepsPerBar * (*pattern)->real.bars;
 	noteValue_t *noteValue = NULL;
 
@@ -1988,7 +1544,7 @@ static void loadStoreNotePattern(pattern_t **pattern, int fd, gboolean store, er
 
 	if (store) {
 		GSList *cur = NULL;
-		for (cur = (*pattern)->real.note.values; cur != NULL; cur = g_slist_next(cur)) {
+		for (cur = (GSList *) (*pattern)->real.note.values; cur != NULL; cur = g_slist_next(cur)) {
 			terror(loadStoreNoteValue(cur->data, fd, store, e))
 		}
 	} else {
@@ -2000,14 +1556,15 @@ static void loadStoreNotePattern(pattern_t **pattern, int fd, gboolean store, er
 			//TODO
 			setAlsaNoteEvent((*pattern)->real.channel, noteValue);
 			(*pattern)->real.note.values =
-			  g_slist_append((*pattern)->real.note.values, noteValue);
+			  g_slist_append((GSList *) (*pattern)->real.note.values, noteValue);
 			noteValue = NULL;
 		}
 	}
 
 	for (i = 0; i < steps; i++) {
-		terror(loadStoreNoteUserStep(*pattern, &((*pattern)->real.note.steps.user[i]),
-		  (*pattern)->real.note.values, fd, store, e))
+		terror(loadStoreNoteUserStep(*pattern,
+		  (noteUserStep_t *) &((*pattern)->real.note.steps.user[i]),
+		  (GSList *) (*pattern)->real.note.values, fd, store, e))
 	}
 
 finish:
@@ -2019,18 +1576,18 @@ static void loadStoreControllerPattern(pattern_t **pattern, int fd,
 {
 	uint32_t i = 0;
 	GSList *cur = NULL;
-	uint32_t controllerValues = g_slist_length((*pattern)->real.controller.values);
+	uint32_t controllerValues = g_slist_length((GSList *) (*pattern)->real.controller.values);
 	uint32_t steps = (*pattern)->real.userStepsPerBar * (*pattern)->real.bars;
 	controllerValue_t *controllerValue = NULL;
 
-	terror(readWriteFd(&(*pattern)->real.controller.parameter,
+	terror(readWriteFd((void *) &(*pattern)->real.controller.parameter,
 	  sizeof((*pattern)->real.controller.parameter), fd, store, e))
 
 	terror(readWriteFd(&controllerValues,
 	  sizeof(controllerValues), fd, store, e))
 
 	if (store) {
-		for (cur = (*pattern)->real.controller.values; cur != NULL; cur = g_slist_next(cur)) {
+		for (cur = (GSList *) (*pattern)->real.controller.values; cur != NULL; cur = g_slist_next(cur)) {
 			terror(loadStoreControllerValue(cur->data, fd, store, e))
 		}
 	} else {
@@ -2038,13 +1595,14 @@ static void loadStoreControllerPattern(pattern_t **pattern, int fd,
 			controllerValue = calloc(1, sizeof(controllerValue_t));
 			terror(loadStoreControllerValue(controllerValue, fd, store, e))
 			(*pattern)->real.controller.values =
-			  g_slist_append((*pattern)->real.controller.values, controllerValue);
+			  g_slist_append((GSList *) (*pattern)->real.controller.values, controllerValue);
 			controllerValue = NULL;
 		}
 	}
 	for (i = 0; i < steps; i++) {
-		terror(loadStoreControllerUserStep(*pattern, &((*pattern)->real.controller.steps.user[i]),
-		  (*pattern)->real.controller.values, fd, store, e))
+		terror(loadStoreControllerUserStep((pattern_t *) *pattern,
+		  (controllerUserStep_t *) &((*pattern)->real.controller.steps.user[i]),
+		  (GSList *) (*pattern)->real.controller.values, fd, store, e))
 	}
 
 finish:
@@ -2055,7 +1613,7 @@ static void loadStoreRealPattern(pattern_t **pattern, int fd, gboolean store,
   pattern_t *parent, err_t *e)
 {
 	if (store) {
-		terror(writeStringToFd((*pattern)->real.name, fd, e))
+		terror(writeStringToFd((char *) (*pattern)->real.name, fd, e))
 	} else {
 		(*pattern) = allocatePattern(parent);
 		(*pattern)->real.parent = parent;
@@ -2063,13 +1621,13 @@ static void loadStoreRealPattern(pattern_t **pattern, int fd, gboolean store,
 		terror((*pattern)->real.name = readStringFromFd(fd, e))
 	}
 
-	terror(readWriteFd(&((*pattern)->real.channel),
+	terror(readWriteFd((void *) &((*pattern)->real.channel),
 	  sizeof((*pattern)->real.channel), fd, store, e))
-	terror(readWriteFd(&((*pattern)->real.userStepsPerBar),
+	terror(readWriteFd((void *) &((*pattern)->real.userStepsPerBar),
 	  sizeof((*pattern)->real.userStepsPerBar), fd, store, e))
-	terror(readWriteFd(&((*pattern)->real.bars),
+	terror(readWriteFd((void *) &((*pattern)->real.bars),
 	  sizeof((*pattern)->real.bars), fd, store, e))
-	terror(readWriteFd(&((*pattern)->real.type),
+	terror(readWriteFd((void *) &((*pattern)->real.type),
 	  sizeof((*pattern)->real.type), fd, store, e))
 
 	if (!store) {
@@ -2096,7 +1654,7 @@ static void loadStorePattern(pattern_t **pattern, int fd, gboolean store,
 	gboolean isRoot = FALSE;
 
 	if (store) {
-		terror(readWriteFd(&((*pattern)->isRoot),
+		terror(readWriteFd((void *) &((*pattern)->isRoot),
 		  sizeof((*pattern)->isRoot), fd, store, e))
 		if ((*pattern)->isRoot) {
 			//nothing
@@ -2111,7 +1669,7 @@ static void loadStorePattern(pattern_t **pattern, int fd, gboolean store,
 			terror(loadStoreRealPattern(pattern, fd, store, parent, e))
 		}
 	}
-	terror(loadStoreChildren(&((*pattern)->children), fd, store, (*pattern), e))
+	terror(loadStoreChildren((GSList **) &((*pattern)->children), fd, store, (*pattern), e))
 finish:
 	if ((hasFailed(e))&&(!store)&&((*pattern) != NULL)) {
 		destroyPattern((*pattern), TRUE); (*pattern) = NULL;
@@ -2151,13 +1709,13 @@ static void onLoad(GtkWidget *widget, gpointer data)
 		LOCK();
 		pattern->real.parent = &rootPattern;
 		rootPattern.children =
-		  g_slist_append(rootPattern.children, pattern); pattern = NULL;
+		  g_slist_append((GSList *) rootPattern.children, pattern); pattern = NULL;
 		UNLOCK();
 	} else {
 		LOCK();
 		rootPattern.children =
-		  g_slist_concat(rootPattern.children, pattern->children);
-		g_slist_foreach(pattern->children, setParentCb, &rootPattern);
+		  g_slist_concat((GSList *) rootPattern.children, (GSList *) pattern->children);
+		g_slist_foreach((GSList *) pattern->children, setParentCb, &rootPattern);
 		destroyPattern(pattern, FALSE); pattern = NULL;
 		UNLOCK();
 	}
@@ -2201,8 +1759,7 @@ static void onStore(GtkWidget *widget, gpointer data)
 	terror(failIfFalse((fd =
 	  open(path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP)) >= 0))
 	terror(loadStorePattern(&(current.pattern), fd, TRUE,
-	  current.pattern->isRoot ? NULL : current.pattern->real.parent, e))
-
+	  current.pattern->isRoot ? NULL : (pattern_t *) current.pattern->real.parent, e))
 finish:
 	if (hasFailed(e)) {
 		runDialog(gtk_message_dialog_new(GTK_WINDOW(appFrame.window),
