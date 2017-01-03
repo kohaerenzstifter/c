@@ -6,6 +6,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdint.h>
+
 
 typedef struct _err {
 	gboolean failed;
@@ -41,6 +43,9 @@ typedef struct _err {
 			goto finish; \
 		} \
 } while(FALSE);
+
+#define PIPE_RD 0
+#define PIPE_WR 1
 
 char *err2string(err_t *e);
 
