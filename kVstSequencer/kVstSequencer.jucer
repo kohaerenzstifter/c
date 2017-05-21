@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<JUCERPROJECT id="HWVkvu" name="kVstSequencer" projectType="audioplug" version="1.0.0"
+              bundleIdentifier="org.kohaerenzstiftung.kVstSequencer" includeBinaryInAppConfig="1"
+              buildVST="1" buildVST3="1" buildAU="0" buildAUv3="0" buildRTAS="0"
+              buildAAX="0" pluginName="kVstSequencer" pluginDesc="kVstSequencer"
+              pluginManufacturer="kohaerenzstiftung" pluginManufacturerCode="Manu"
+              pluginCode="Hwvk" pluginChannelConfigs="" pluginIsSynth="0" pluginWantsMidiIn="1"
+              pluginProducesMidiOut="1" pluginIsMidiEffectPlugin="0" pluginEditorRequiresKeys="0"
+              pluginAUExportPrefix="kVstSequencerAU" pluginRTASCategory=""
+              aaxIdentifier="com.kohaerenzstiftung.kVstSequencer" pluginAAXCategory="AAX_ePlugInCategory_Dynamics"
+              jucerVersion="5.0.0" displaySplashScreen="1" reportAppUsage="1"
+              splashScreenColour="Dark" buildStandalone="0" enableIAA="0">
+  <MAINGROUP id="MPdFcU" name="kVstSequencer">
+    <GROUP id="{B8069AE2-6ECC-6BD1-9EE3-E8DA19FB82B7}" name="Source">
+      <FILE id="adgCOg" name="kohaerenzstiftung.c" compile="1" resource="0"
+            file="../kohaerenzstiftung/kohaerenzstiftung.c"/>
+      <FILE id="JHAxAw" name="kVstSequencer.cpp" compile="1" resource="0"
+            file="Source/kVstSequencer.cpp"/>
+      <FILE id="FJi0bn" name="table.c" compile="1" resource="0" file="Source/table.c"/>
+      <FILE id="dineex" name="kVstSequencer.h" compile="0" resource="0" file="Source/kVstSequencer.h"/>
+      <FILE id="kq4qFt" name="PluginProcessor.cpp" compile="1" resource="0"
+            file="Source/PluginProcessor.cpp"/>
+      <FILE id="wb6XUh" name="PluginProcessor.h" compile="1" resource="0"
+            file="Source/PluginProcessor.h"/>
+      <FILE id="Gr1R1a" name="PluginEditor.cpp" compile="1" resource="0"
+            file="Source/PluginEditor.cpp"/>
+      <FILE id="ZJUBNA" name="PluginEditor.h" compile="1" resource="0" file="Source/PluginEditor.h"/>
+    </GROUP>
+  </MAINGROUP>
+  <EXPORTFORMATS>
+    <LINUX_MAKE targetFolder="Builds/LinuxMakefile" extraCompilerFlags="-I../../../kohaerenzstiftung/"
+                extraLinkerFlags="" linuxExtraPkgConfig="glib-2.0" externalLibraries=""
+                vst3Folder="">
+      <CONFIGURATIONS>
+        <CONFIGURATION name="Debug" isDebug="1" optimisation="1" targetName="kVstSequencer"/>
+        <CONFIGURATION name="Release" isDebug="0" optimisation="3" targetName="kVstSequencer"/>
+      </CONFIGURATIONS>
+      <MODULEPATHS>
+        <MODULEPATH id="juce_core" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_events" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_graphics" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_data_structures" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_basics" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_gui_extra" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_cryptography" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_video" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_opengl" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_basics" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_devices" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_formats" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_processors" path="../../versioned/git/JUCE/modules"/>
+        <MODULEPATH id="juce_audio_plugin_client" path="../../versioned/git/JUCE/modules"/>
+      </MODULEPATHS>
+    </LINUX_MAKE>
+  </EXPORTFORMATS>
+  <MODULES>
+    <MODULE id="juce_audio_basics" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_devices" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_formats" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_plugin_client" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_audio_processors" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_core" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_cryptography" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_data_structures" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_events" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_graphics" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_gui_basics" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_gui_extra" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_opengl" showAllCode="1" useLocalCopy="0"/>
+    <MODULE id="juce_video" showAllCode="1" useLocalCopy="0"/>
+  </MODULES>
+  <JUCEOPTIONS JUCE_QUICKTIME="disabled"/>
+  <LIVE_SETTINGS>
+    <LINUX extraCompilerFlags="-Wall"/>
+  </LIVE_SETTINGS>
+</JUCERPROJECT>

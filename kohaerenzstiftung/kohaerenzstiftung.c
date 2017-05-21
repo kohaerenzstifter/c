@@ -32,11 +32,13 @@ static FILE *errFile = NULL;
 static void closeFiles(void)
 {
 	if ((outFile != NULL)&&(outFile != stdout)) {
-		fclose(outFile); outFile = NULL;
+		fclose(outFile);
 	}
+	outFile = NULL;
 	if ((errFile != NULL)&&(errFile != stderr)) {
-		fclose(errFile); errFile = NULL;
+		fclose(errFile);
 	}
+	errFile = NULL;
 }
 
 static FILE *openLogFile(char *path, FILE *alternative)
@@ -190,10 +192,12 @@ finish:
 	return result;
 }
 
-void setOutput(char *out, char *error, err_t *e)
+void setOutput(const char *out, const char *error, err_t *e)
 {
 	strncpy(outPath, out, sizeof(outPath));
 	strncpy(errPath, error, sizeof(errPath));
+
+	closeFiles();
 }
 
 void daemonize(err_t *e)

@@ -759,7 +759,7 @@ static void renderSteps(pattern_t *pattern, uint32_t bar)
 			value = 0xffff;
 		}
 	}
-	
+
 	stepsView = getBox(GTK_ORIENTATION_HORIZONTAL);
 	addWidget(stepsBox, stepsView);
 

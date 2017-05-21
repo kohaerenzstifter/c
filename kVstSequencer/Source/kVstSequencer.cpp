@@ -1,7 +1,11 @@
-#include "ksequencer.h"
+#include "kVstSequencer.h"
+
+#include "PluginProcessor.h"
 
 static void lockMutex(mutex_t *mutex, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	terror(failIfFalse(mutex->initialised))
@@ -13,6 +17,8 @@ finish:
 
 static void unlockMutex(mutex_t *mutex, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	terror(failIfFalse(mutex->initialised))
@@ -24,15 +30,15 @@ finish:
 
 static void lockCounted(lockContext_t *lockContext, uint32_t mutex, err_t *e)
 {
+	MARK();
+
 	defineError();
-#if 0
+
 	if (lockContext == NULL) {
 		goto finish;
 	}
-#endif
-#if 0
+
 	if (lockContext->mutexes[mutex] < 1)  {
-#endif
 		for (uint32_t i = 0; i < mutex; i++) {
 			terror(failIfFalse((lockContext->mutexes[i] <=
 			  lockContext->mutexes[mutex])))
@@ -40,9 +46,7 @@ static void lockCounted(lockContext_t *lockContext, uint32_t mutex, err_t *e)
 		if (lockContext->mutexes[mutex] < 1) {
 			terror(lockMutex(&mutexes.value[mutex], e))
 		}
-#if 0
 	}
-#endif
 	lockContext->mutexes[mutex]++;
 
 finish:
@@ -51,12 +55,14 @@ finish:
 
 static void unlockCounted(lockContext_t *lockContext, uint32_t mutex, err_t *e)
 {
+	MARK();
+
 	defineError();
-#if 0
+
 	if (lockContext == NULL) {
 		goto finish;
 	}
-#endif
+
 	terror(failIfFalse((lockContext->mutexes[mutex] >  0)))
 	if (lockContext->mutexes[mutex] < 2) {
 		terror(unlockMutex(&mutexes.value[mutex], e))
@@ -69,6 +75,8 @@ finish:
 
 void getLocks(lockContext_t *lockContext, uint32_t locks, err_t *e)
 {
+	MARK();
+
 	for (int32_t i = (NR_MUTEXES - 1),
 	  mask = (1 << i); i >= 0; i--, mask >>= 1)  {
 		if (!(locks & mask)) {
@@ -78,11 +86,14 @@ void getLocks(lockContext_t *lockContext, uint32_t locks, err_t *e)
 	}
 
 finish:
+if (hasFailed(e)) abort();
 	return;
 }
 
 void releaseLocks(lockContext_t *lockContext, uint32_t locks, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	for (uint32_t i = 0, mask = 1; i < NR_MUTEXES; i++, mask <<= 1)  {
@@ -99,6 +110,8 @@ finish:
 static void requireLocks(lockContext_t *lockContext,
   uint32_t required, err_t *e)
 {
+	MARK();
+
 	for (uint32_t i = 0, mask = 1; i < NR_MUTEXES; i++, mask <<= 1)  {
 		if (!(required & mask)) {
 			continue;
@@ -114,6 +127,8 @@ finish:
 static gboolean anyStepSetForChild(pattern_t *parent, uint32_t idx,
   pattern_t *child)
 {
+	MARK();
+
 	gboolean result = FALSE;
 	uint32_t barsFactor = (NR_BARS(child) / NR_BARS(parent));
 	uint32_t stepsPerBarFactor =
@@ -134,30 +149,81 @@ static gboolean anyStepSetForChild(pattern_t *parent, uint32_t idx,
 	return result;
 }
 
-static void unsoundNoteEvent(noteEvent_t *offNoteEvent)
+void fireMidiMessage(lockContext_t *lockContext,
+  midiMessage_t *midiMessage, err_t *e)
 {
+	MARK();
+
+	defineError();
+
+	terror(requireLocks(lockContext, (LOCK_SEQUENCER), e))
+
+	midiMessages = g_slist_prepend((GSList *) midiMessages, midiMessage);
+
+finish:
+	return;
+}
+
+static midiMessage_t *getMidiMessage(midiMessageType_t midiMessageType)
+{
+	MARK();
+
+	midiMessage_t *result = (midiMessage_t *) calloc(1, sizeof(midiMessage_t));
+	result->midiMessageType = midiMessageType;
+
+	return result;
+}
+
+midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value)
+{
+	MARK();
+
+	midiMessage_t *result = getMidiMessage(midiMessageTypeController);
+	result->controller.parameter = parameter;
+	result->controller.value = value;
+
+	return result;
+}
+
+midiMessage_t *getNoteOffMidiMessage(noteEvent_t *noteEvent)
+{
+	MARK();
+
+	midiMessage_t *result = getMidiMessage(midiMessageTypeNoteOff);
+	result->noteOff.noteNumber = MIDI_PITCH(noteEvent);
+
+	return result;
+}
+
+static void unsoundNoteEvent(lockContext_t *lockContext,
+  noteEvent_t *offNoteEvent, err_t *e)
+{
+	MARK();
+
+	midiMessage_t *midiMessage = NULL;
+	terror(requireLocks(lockContext, (LOCK_DATA), e))
+
 	if (offNoteEvent->off.noteOffLink == NULL) {
 		goto finish;
 	}
 
-	offNoteEvent->noteValue->snd_seq_event->dest = sequencer.snd_seq_addr;
-	offNoteEvent->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF;
-
-	snd_seq_event_output(sequencer.snd_seq,
-	  (snd_seq_event_t *) offNoteEvent->noteValue->snd_seq_event);
-	snd_seq_drain_output(sequencer.snd_seq);
+	midiMessage = getNoteOffMidiMessage(offNoteEvent);
+	terror(fireMidiMessage(lockContext, midiMessage, e))
+	midiMessage = NULL;
 	notesOff.value =
 	  g_slist_delete_link((GSList *) notesOff.value,
 	  (GSList *) offNoteEvent->off.noteOffLink);
 	offNoteEvent->off.noteOffLink = NULL;
 
 finish:
-	return;
+	free(midiMessage);
 }
 
 void unsoundPattern(lockContext_t *lockContext,
   pattern_t *pattern, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	terror(failIfFalse((TYPE(pattern) == patternTypeNote)))
@@ -165,12 +231,13 @@ void unsoundPattern(lockContext_t *lockContext,
 	terror(requireLocks(lockContext, (LOCK_DATA | LOCK_SEQUENCER), e))
 
 	for (uint32_t i = 0; i < NR_EVENTSTEPS(pattern); i++) {
-		noteEventStep_t *noteEventStep = EVENTSTEP_AT(pattern, i);
+		noteEventStep_t *noteEventStep =
+		  (noteEventStep_t *) EVENTSTEP_AT(pattern, i);
 		if (noteEventStep->onNoteEvent == NULL) {
 			continue;
 		}
-		unsoundNoteEvent((noteEvent_t *)
-		  noteEventStep->onNoteEvent->on.offNoteEvent);
+		terror(unsoundNoteEvent(lockContext, (noteEvent_t *)
+		  noteEventStep->onNoteEvent->on.offNoteEvent, e))
 	}
 
 finish:
@@ -180,10 +247,13 @@ finish:
 static void redirect(pattern_t *pattern, uint32_t startIdx,
   noteEvent_t *find, noteEvent_t *replace)
 {
+	MARK();
+
 	uint32_t numberSteps = NR_USERSTEPS(pattern);
 
 	for (uint32_t i = startIdx; i < numberSteps; i++) {
-		noteUserStep_t *noteUserStep = USERSTEP_AT(pattern, i);
+		noteUserStep_t *noteUserStep =
+		  (noteUserStep_t *) USERSTEP_AT(pattern, i);
 
 		if (noteUserStep->onNoteEvent != find) {
 			break;
@@ -192,74 +262,92 @@ static void redirect(pattern_t *pattern, uint32_t startIdx,
 	}
 }
 
+void moveStepOnToNext(pattern_t *pattern, noteUserStep_t *noteUserStep)
+{
+	MARK();
+
+	noteEventStep_t *isNoteOnEventStep =
+	  (noteEventStep_t *) noteUserStep->onNoteEvent->noteEventStep;
+	noteEventStep_t *mustNoteOnEventStep =
+	  isNoteOnEventStep + EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
+
+	noteUserStep->onNoteEvent->noteEventStep = mustNoteOnEventStep;
+
+	mustNoteOnEventStep->onNoteEvent = isNoteOnEventStep->onNoteEvent;
+	isNoteOnEventStep->onNoteEvent = NULL;
+}
+
+void removeNote(noteUserStep_t *noteUserStep)
+{
+	MARK();
+
+	noteUserStep->onNoteEvent->on.offNoteEvent->noteEventStep->offNoteEvent
+	  = NULL;
+	free((noteEvent_t *) noteUserStep->onNoteEvent->on.offNoteEvent);
+	noteUserStep->onNoteEvent->noteEventStep->onNoteEvent = NULL;
+	free(noteUserStep->onNoteEvent);
+}
+
+void previousNoteOff(pattern_t *pattern,
+  noteUserStep_t *noteUserStep, noteUserStep_t *previous, uint32_t eventStepIdx)
+{
+	MARK();
+
+	noteEvent_t *noteEvent =
+	  (noteEvent_t *) previous->onNoteEvent->on.offNoteEvent;
+
+	noteUserStep->onNoteEvent->on.offNoteEvent->noteEventStep->offNoteEvent
+	  = NULL;
+
+	noteEvent->noteEventStep =
+	  (noteEventStep_t *) EVENTSTEP_AT(pattern, eventStepIdx);
+	noteEvent->noteEventStep->offNoteEvent = noteEvent;
+}
+
+void nextNoteOn(pattern_t *pattern, noteEventStep_t *offNoteEventStep,
+  noteUserStep_t *next, noteValue_t *noteValue, uint32_t userStepIdx,
+  uint32_t eventStepIdx)
+{
+	MARK();
+
+	noteEvent_t *onNoteEvent = NULL;
+	noteEvent_t *noteOffEvent = NULL;
+
+	noteEventStep_t *eventStep =
+	  (noteEventStep_t *) EVENTSTEP_AT(pattern, eventStepIdx);
+	noteEventStep_t *mustStep =
+	  eventStep + EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
+
+	onNoteEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
+	onNoteEvent->noteValue = noteValue;
+	onNoteEvent->noteEventStep = mustStep;
+
+	noteOffEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
+	noteOffEvent->noteValue = noteValue;
+	noteOffEvent->noteEventStep = offNoteEventStep;
+
+	onNoteEvent->on.offNoteEvent = noteOffEvent;
+
+	redirect(pattern, (userStepIdx + 1), next->onNoteEvent, onNoteEvent);
+
+	mustStep->onNoteEvent = onNoteEvent;
+	offNoteEventStep->offNoteEvent = noteOffEvent;
+	eventStep->onNoteEvent = NULL;
+}
+
 static void unsetNoteStep(pattern_t *pattern,
   noteUserStep_t *noteUserStep, uint32_t userStepIdx)
 {
+	MARK();
+
 	noteUserStep_t *previous = (userStepIdx < 1) ? NULL :
-	  USERSTEP_AT(pattern, (userStepIdx - 1));
+	  (noteUserStep_t *) USERSTEP_AT(pattern, (userStepIdx - 1));
 	noteUserStep_t *next =
 	  (userStepIdx >= (NR_USERSTEPS(pattern) - 1)) ? NULL :
-	  USERSTEP_AT(pattern, (userStepIdx + 1));
+	  (noteUserStep_t *) USERSTEP_AT(pattern, (userStepIdx + 1));
 
 	uint32_t eventStepIdx =
 	  userStepIdx * EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
-
-	void moveStepOnToNext(void) {
-		noteEventStep_t *isNoteOnEventStep =
-		  (noteEventStep_t *) noteUserStep->onNoteEvent->noteEventStep;
-		noteEventStep_t *mustNoteOnEventStep =
-		  isNoteOnEventStep + EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
-
-		noteUserStep->onNoteEvent->noteEventStep = mustNoteOnEventStep;
-
-		mustNoteOnEventStep->onNoteEvent = isNoteOnEventStep->onNoteEvent;
-		isNoteOnEventStep->onNoteEvent = NULL;
-	}
-
-	void removeNote(void) {
-		noteUserStep->onNoteEvent->on.offNoteEvent->noteEventStep->offNoteEvent
-		  = NULL;
-		free((noteEvent_t *) noteUserStep->onNoteEvent->on.offNoteEvent);
-		noteUserStep->onNoteEvent->noteEventStep->onNoteEvent = NULL;
-		free(noteUserStep->onNoteEvent);
-	}
-
-	void previousNoteOff(void) {
-		noteEvent_t *noteEvent =
-		  (noteEvent_t *) previous->onNoteEvent->on.offNoteEvent;
-
-		noteUserStep->onNoteEvent->on.offNoteEvent->noteEventStep->offNoteEvent
-		  = NULL;
-
-		noteEvent->noteEventStep = EVENTSTEP_AT(pattern, eventStepIdx);
-		noteEvent->noteEventStep->offNoteEvent = noteEvent;
-	}
-
-	void nextNoteOn(noteEventStep_t *offNoteEventStep,
-	  noteValue_t *noteValue) {
-		noteEvent_t *onNoteEvent = NULL;
-		noteEvent_t *noteOffEvent = NULL;
-
-		noteEventStep_t *eventStep = EVENTSTEP_AT(pattern, eventStepIdx);
-		noteEventStep_t *mustStep =
-		  eventStep + EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
-
-		onNoteEvent = calloc(1, sizeof(noteEvent_t));
-		onNoteEvent->noteValue = noteValue;
-		onNoteEvent->noteEventStep = mustStep;
-
-		noteOffEvent = calloc(1, sizeof(noteEvent_t));
-		noteOffEvent->noteValue = noteValue;
-		noteOffEvent->noteEventStep = offNoteEventStep;
-
-		onNoteEvent->on.offNoteEvent = noteOffEvent;
-
-		redirect(pattern, (userStepIdx + 1), next->onNoteEvent, onNoteEvent);
-
-		mustStep->onNoteEvent = onNoteEvent;
-		offNoteEventStep->offNoteEvent = noteOffEvent;
-		eventStep->onNoteEvent = NULL;
-	}
 
 	if (noteUserStep->onNoteEvent == NULL) {
 		goto finish;
@@ -268,17 +356,19 @@ static void unsetNoteStep(pattern_t *pattern,
 	if ((previous == NULL)||(noteUserStep->onNoteEvent
 	  != previous->onNoteEvent)) {
 		if ((next != NULL)&&(noteUserStep->onNoteEvent == next->onNoteEvent)) {
-			moveStepOnToNext();
+			moveStepOnToNext(pattern, noteUserStep);
 		} else {
-			removeNote();
+			removeNote(noteUserStep);
 		}
 	} else {
 		noteEventStep_t *offNoteEventStep =
 		  (noteEventStep_t *)
 		  previous->onNoteEvent->on.offNoteEvent->noteEventStep;
-		previousNoteOff();
+		previousNoteOff(pattern, noteUserStep, previous, eventStepIdx);
 		if ((next != NULL)&&(noteUserStep->onNoteEvent == next->onNoteEvent)) {
-			nextNoteOn(offNoteEventStep, noteUserStep->value->data);
+			nextNoteOn(pattern, offNoteEventStep, next,
+			  (noteValue_t *) noteUserStep->value->data, userStepIdx,
+			  eventStepIdx);
 		}
 	}
 
@@ -289,20 +379,22 @@ finish:
 static void doSetNoteStep(pattern_t *pattern,
   noteUserStep_t *noteUserStep, uint32_t userStepIdx)
 {
+	MARK();
+
 	noteEvent_t *onNoteEvent = NULL;
 	noteEvent_t *offNoteEvent = NULL;
-	noteValue_t *noteValue = noteUserStep->value->data;
+	noteValue_t *noteValue = (noteValue_t *) noteUserStep->value->data;
 	uint32_t eventStepIdx =
 	  userStepIdx * EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
 	noteUserStep_t *previous = (userStepIdx < 1) ? NULL :
-	  USERSTEP_AT(pattern, (userStepIdx - 1));
+	  (noteUserStep_t *) USERSTEP_AT(pattern, (userStepIdx - 1));
 	noteUserStep_t *next =
 	  (userStepIdx >= (NR_USERSTEPS(pattern) - 1)) ? NULL :
-	  USERSTEP_AT(pattern, (userStepIdx + 1));
+	  (noteUserStep_t *) USERSTEP_AT(pattern, (userStepIdx + 1));
 	if ((previous != NULL)&&(previous->slide)&&
 	  (previous->value != NULL)) {
-		noteValue_t *previousNoteValue = previous->value->data;
-		if ((noteValue->tone == previousNoteValue->tone)&&
+		noteValue_t *previousNoteValue = (noteValue_t *) previous->value->data;
+		if ((noteValue->note == previousNoteValue->note)&&
 		  (noteValue->sharp == previousNoteValue->sharp)&&
 		  (noteValue->octave == previousNoteValue->octave)) {
 			onNoteEvent = previous->onNoteEvent;
@@ -311,15 +403,16 @@ static void doSetNoteStep(pattern_t *pattern,
 		}
 	}
 	if (onNoteEvent == NULL) {
-		onNoteEvent = calloc(1, sizeof(noteEvent_t));
-		onNoteEvent->noteEventStep = EVENTSTEP_AT(pattern, (eventStepIdx));
+		onNoteEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
+		onNoteEvent->noteEventStep =
+		  (noteEventStep_t *) EVENTSTEP_AT(pattern, (eventStepIdx));
 		onNoteEvent->noteEventStep->onNoteEvent = onNoteEvent;
-		onNoteEvent->noteValue = noteUserStep->value->data;
+		onNoteEvent->noteValue = (noteValue_t *) noteUserStep->value->data;
 	}
 	if ((next != NULL)&&(noteUserStep->slide)&&
 	  (next->value != NULL)) {
-		noteValue_t *nextNoteValue = next->value->data;
-		if ((noteValue->tone == nextNoteValue->tone)&&
+		noteValue_t *nextNoteValue = (noteValue_t *) next->value->data;
+		if ((noteValue->note == nextNoteValue->note)&&
 		  (noteValue->sharp == nextNoteValue->sharp)&&
 		  (noteValue->octave == nextNoteValue->octave)) {
 			offNoteEvent = (noteEvent_t *) next->onNoteEvent->on.offNoteEvent;
@@ -330,119 +423,46 @@ static void doSetNoteStep(pattern_t *pattern,
 		}
 	}
 	if (offNoteEvent == NULL) {
-		offNoteEvent = calloc(1, sizeof(noteEvent_t));
+		offNoteEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
 		eventStepIdx += EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
 		if (!noteUserStep->slide) {
 			eventStepIdx--;
 		}
-		offNoteEvent->noteEventStep = EVENTSTEP_AT(pattern, (eventStepIdx));
+		offNoteEvent->noteEventStep =
+		  (noteEventStep_t *) EVENTSTEP_AT(pattern, (eventStepIdx));
 		offNoteEvent->noteEventStep->offNoteEvent = offNoteEvent;
-		offNoteEvent->noteValue = noteUserStep->value->data;
+		offNoteEvent->noteValue = (noteValue_t *) noteUserStep->value->data;
 	}
 	noteUserStep->onNoteEvent = onNoteEvent;
+	onNoteEvent->on.velocity =
+	  ((controllerValue_t *) (noteUserStep->velocity->data))->value;
 	onNoteEvent->on.offNoteEvent = offNoteEvent;
 }
 
 static void doSetControllerStep(pattern_t *pattern,
   controllerUserStep_t *controllerUserStep, uint32_t idx)
 {
+	MARK();
+
 	controllerValue_t *controllerValue = (controllerUserStep->value == NULL) ?
-	  NULL : controllerUserStep->value->data;
+	  NULL : (controllerValue_t *) controllerUserStep->value->data;
 	controllerEventStep_t *controllerEventStep =
-	  EVENTSTEP_AT(pattern, (idx *
+	  (controllerEventStep_t *) EVENTSTEP_AT(pattern, (idx *
 	  EVENTSTEPS_PER_USERSTEP((pattern->patternType))));
 
 	controllerEventStep->controllerValue = controllerValue;
 }
 
-static void resetSynchronisation(lockContext_t *lockContext, err_t *e)
-{
-	defineError();
-
-	terror(requireLocks(lockContext, LOCK_SYNCHRONISATION, e))
-
-	synchronisation.synchronisationStatus.sequence++;
-	synchronisation.synchronisationStatus.lastTick.have = FALSE;
-	synchronisation.synchronisationStatus.lastTick.value = 0;
-	synchronisation.synchronisationStatus.lastTick.at = 0;
-	synchronisation.synchronisationStatus.pace.have = FALSE;
-	synchronisation.synchronisationStatus.pace.nanosecondsPerTick = 0;
-
-	pthread_cond_broadcast((&(synchronisation.wakeupConsumers)));
-
-finish:
-	return;
-}
-
-void disconnectFromPort(lockContext_t *lockContext, err_t *e)
-{
-	defineError();
-
-	gboolean locked = FALSE;
-	uint32_t locks = (LOCK_SEQUENCER | LOCK_SYNCHRONISATION);
-
-	terror(getLocks(lockContext, locks, e))
-	locked = TRUE;
-
-	snd_seq_disconnect_from(sequencer.snd_seq, sequencer.myPort,
-	  sequencer.snd_seq_addr.client, sequencer.snd_seq_addr.port);
-	snd_seq_disconnect_to(sequencer.snd_seq, sequencer.myPort,
-	  sequencer.snd_seq_addr.client, sequencer.snd_seq_addr.port);
-
-	sequencer.connected = FALSE;
-
-finish:
-	if (locked) {	
-		releaseLocks(lockContext, locks, NULL);
-	}
-}
-
-void connectToPort(lockContext_t *lockContext,
-  guint client, guint port, err_t *e)
-{
-	defineError();
-
-	gboolean locked = FALSE;
-	uint32_t locks = (LOCK_DATA | LOCK_SEQUENCER | LOCK_SYNCHRONISATION);
-
-	terror(getLocks(lockContext, locks, e))
-	locked = TRUE;
-
-	terror(allNotesOff(lockContext, TRUE, e))
-
-	if (sequencer.connected) {
-		if ((client == sequencer.snd_seq_addr.client)&&(port ==
-		  sequencer.snd_seq_addr.port)) {
-			goto finish;
-		}
-
-		terror(disconnectFromPort(lockContext, e))
-	}
-
-	terror(failIfFalse(snd_seq_connect_from(sequencer.snd_seq,
-	  sequencer.myPort, client, port) == 0))
-	terror(failIfFalse(snd_seq_connect_to(sequencer.snd_seq,
-	  sequencer.myPort, client, port) == 0))
-
-	sequencer.snd_seq_addr.client = client;
-	sequencer.snd_seq_addr.port = port;
-	sequencer.connected = TRUE;
-
-	terror(resetSynchronisation(lockContext, e))
-
-finish:
-	if (locked) {	
-		releaseLocks(lockContext, locks, NULL);
-	}
-}
-
 gboolean anyChildStepSet(pattern_t *pattern, uint32_t idx)
 {
+	MARK();
+
 	gboolean result = FALSE;
 
 	for (GSList *cur = (GSList *) pattern->children; cur != NULL;
 	  cur = g_slist_next(cur)) {
-		if ((result = anyStepSetForChild(pattern, idx, cur->data))) {
+		if ((result = anyStepSetForChild(pattern, idx,
+		  (pattern_t *) cur->data))) {
 			break;
 		}
 	}
@@ -452,6 +472,8 @@ gboolean anyChildStepSet(pattern_t *pattern, uint32_t idx)
 
 void lockUserStep(pattern_t *pattern, uint32_t idx)
 {
+	MARK();
+
 	void *step = USERSTEP_AT(pattern, idx);
 
 	LOCKED(step, pattern->patternType) = !LOCKED(step, pattern->patternType);
@@ -459,6 +481,8 @@ void lockUserStep(pattern_t *pattern, uint32_t idx)
 
 void lockSlide(pattern_t *pattern, uint32_t idx)
 {
+	MARK();
+
 	noteUserStep_t *noteUserStep =
 	  (noteUserStep_t *) (USERSTEP_AT(pattern, idx));
 
@@ -468,6 +492,8 @@ void lockSlide(pattern_t *pattern, uint32_t idx)
 void setDummyStep(pattern_t *pattern, dummyUserStep_t *dummyUserStep,
   gboolean set, lockContext_t *lockContext, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	gboolean locked = FALSE;
@@ -487,6 +513,8 @@ void setControllerStep(pattern_t *pattern,
   controllerUserStep_t *controllerUserStep, GSList *value,
   uint32_t idx, lockContext_t *lockContext, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	gboolean locked = FALSE;
@@ -505,15 +533,17 @@ finish:
 }
 
 void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
-  GSList *value, uint32_t idx, lockContext_t *lockContext,
+  GSList *value, GSList *velocity, uint32_t idx, lockContext_t *lockContext,
   gboolean live, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	gboolean locked = FALSE;
 	uint32_t locks = (LOCK_DATA | LOCK_SEQUENCER);
 
-	if (noteUserStep->value == value) {
+	if ((noteUserStep->value == value)&&(noteUserStep->velocity == velocity)) {
 		goto finish;
 	}
 
@@ -528,9 +558,9 @@ void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
 		  lockContext, FALSE, e))
 	}
 	terror(unsetNoteStep(pattern, noteUserStep, idx))
-	
-	noteUserStep->value = value;
 
+	noteUserStep->value = value;
+	noteUserStep->velocity = velocity;
 	if (noteUserStep->value == NULL) {
 		goto finish;
 	}
@@ -546,6 +576,8 @@ void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
   gboolean slide, uint32_t idx, lockContext_t *lockContext,
   gboolean live, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	gboolean locked = FALSE;
@@ -562,6 +594,7 @@ void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
 		locked = TRUE;
 		terror(unsoundPattern(lockContext, pattern, e))
 	}
+
 	terror(unsetNoteStep(pattern, noteUserStep, idx))
 	noteUserStep->slide = slide;
 	if (noteUserStep->value == NULL) {
@@ -577,33 +610,43 @@ finish:
 
 void freeValue(pattern_t *pattern, void *value)
 {
+	MARK();
+
 	if (IS_NOTE(pattern)) {
-		freeNoteValue(value);
+		freeNoteValue((noteValue_t *) value);
 	} else {
-		freeControllerValue(value);
+		freeControllerValue((controllerValue_t *) value);
 	}
 }
 
 static void cbFreeValue(gpointer data, gpointer user_data)
 {
-	freeValue(user_data, data);
+	MARK();
+
+	freeValue((pattern_t *) user_data, data);
 }
 
 static void cbFreePattern(gpointer data, gpointer user_data)
 {
-	freePattern(data);
+	MARK();
+
+	freePattern((pattern_t *) data);
 }
 
-void freePattern(pattern_t *pattern)
+void freePatternTODO(pattern_t *pattern, int line)
 {
+	MARK();
+
 	g_slist_foreach((GSList *) CHILDREN(pattern), cbFreePattern, NULL);
 	g_slist_free((GSList *) CHILDREN(pattern));
 
 	free(pattern->name);
-	for (uint32_t i = 0; i < NR_USERSTEPS(pattern); i++) {
-		UNSET_STEP(pattern, USERSTEP_AT(pattern, i), i);
+	if (USERSTEPS(pattern) != NULL)  {
+		for (uint32_t i = 0; i < NR_USERSTEPS(pattern); i++) {
+			UNSET_STEP(pattern, USERSTEP_AT(pattern, i), i);
+		}
+		free(USERSTEPS(pattern));
 	}
-	free(USERSTEPS(pattern));
 	if (!IS_DUMMY(pattern)) {
 		g_slist_foreach(VALUES(pattern), cbFreeValue, pattern);
 		g_slist_free(VALUES(pattern));
@@ -614,141 +657,66 @@ void freePattern(pattern_t *pattern)
 
 pattern_t *allocatePattern(pattern_t *parent)
 {
-	pattern_t *result = calloc(1, sizeof(pattern_t));
+	MARK();
+
+	pattern_t *result = (pattern_t *) calloc(1, sizeof(pattern_t));
 
 	return result;
 }
 
 
 void freeControllerValue(controllerValue_t *controllerValue)
-
 {
-	free((snd_seq_event_t *) controllerValue->snd_seq_event);
+	MARK();
+
 	free((char *) controllerValue->name);
 	free(controllerValue);
 }
 
 void freeNoteValue(noteValue_t *noteValue)
 {
-	free((snd_seq_event_t *) noteValue->snd_seq_event);
+	MARK();
+
 	free((char *) noteValue->name);
 	free(noteValue);
 }
 
-snd_seq_event_t *getAlsaEvent(void)
-{
-	snd_seq_event_t *result = calloc(1, sizeof((*result)));
-#if 0
-	snd_seq_ev_clear(result);
-#endif
-	snd_seq_ev_set_direct(result);
-
-	return result;
-}
-
 noteValue_t *allocateNoteValue(void)
 {
-	noteValue_t *result = calloc(1, sizeof((*result)));
+	MARK();
 
-	result->snd_seq_event = getAlsaEvent();
+	noteValue_t *result = (noteValue_t *) calloc(1, sizeof((*result)));
 
 	return result;
 }
 
 controllerValue_t *allocateControllerValue(void)
 {
-	controllerValue_t *result = calloc(1, sizeof((*result)));
+	MARK();
 
-	result->snd_seq_event = getAlsaEvent();
+	controllerValue_t *result =
+	  (controllerValue_t *) calloc(1, sizeof((*result)));
 
 	return result;
 }
 
-void setAlsaNoteEvent(noteValue_t *noteValue, uint8_t channel,
-  lockContext_t *lockContext, gboolean live, err_t *e)
-{
-	defineError();
-
-	int32_t note2Int(noteValue_t *noteValue) {
-		int32_t result = 0;
-		struct {
-			char tone;
-			int32_t value;
-		} values[] = {
-			{'c', 24},
-			{'d', 26},
-			{'e', 28},
-			{'f', 29},
-			{'g', 31},
-			{'a', 33},
-			{'b', 35}
-		};
-
-		for (uint32_t i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
-			if (values[i].tone == noteValue->tone) {
-				result = values[i].value;
-				break;
-			}
-		}
-	
-		if (noteValue->sharp) {
-			result++;
-		}
-
-		result += 12 * noteValue->octave;
-
-		return result;
-	}
-
-	int32_t note = note2Int(noteValue);
-
-	if (live)  {
-		terror(requireLocks(lockContext, LOCK_DATA, e))
-	}
-	snd_seq_ev_set_noteon(noteValue->snd_seq_event, (channel - 1), note, 127);
-
-finish:
-	return;
-}
-
-void setAlsaControllerEvent2(snd_seq_event_t *snd_seq_event, uint8_t channel,
-  uint8_t parameter, uint8_t value)
-{
-	snd_seq_ev_set_controller(snd_seq_event, (channel - 1),
-	  parameter, value);
-}
-
-void setAlsaControllerEvent(controllerValue_t *controllerValue,
-  uint8_t channel, uint8_t parameter, lockContext_t *lockContext,
-  gboolean live, err_t *e)
-{
-	defineError();
-
-	if (live) {
-		terror(requireLocks(lockContext, LOCK_DATA, e))
-	}
-
-	terror(setAlsaControllerEvent2((snd_seq_event_t *)
-	  controllerValue->snd_seq_event, channel,
-      parameter, controllerValue->value))
-
-finish:
-	return;
-}
-
 void setSteps(pattern_t *pattern)
 {
+	MARK();
+
 	USERSTEPS(pattern) =
-	  calloc(NR_USERSTEPS(pattern), SZ_USERSTEP(pattern));
+	  (char *) calloc(NR_USERSTEPS(pattern), SZ_USERSTEP(pattern));
 	if (!IS_DUMMY(pattern)) {
 		EVENTSTEPS(pattern) =
-		  calloc(NR_EVENTSTEPS(pattern), SZ_EVENTSTEP(pattern));
+		  (char *) calloc(NR_EVENTSTEPS(pattern), SZ_EVENTSTEP(pattern));
 	}
 }
 
 void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
   lockContext_t *lockContext, gboolean live, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	gboolean locked = FALSE;
@@ -809,6 +777,8 @@ finish:
 void deleteChild(pattern_t *parent, GSList *childLink,
   lockContext_t *lockContext, err_t *e)
 {
+	MARK();
+
 	defineError();
 
 	uint32_t locks = (IS_NOTE(((pattern_t *) childLink->data))) ?
@@ -819,10 +789,10 @@ void deleteChild(pattern_t *parent, GSList *childLink,
 	locked = TRUE;
 
 	if (locks & LOCK_SEQUENCER) {
-		terror(unsoundPattern(lockContext, childLink->data, e))
+		terror(unsoundPattern(lockContext, (pattern_t *) childLink->data, e))
 	}
 
-	freePattern(childLink->data);
+	freePattern((pattern_t *) childLink->data);
 
 	CHILDREN(parent) =
 	  g_slist_delete_link((GSList *) CHILDREN(parent), childLink);
@@ -833,23 +803,40 @@ finish:
 	}
 }
 
+typedef struct {
+	lockContext_t *lockContext;
+	err_t *e;
+} crutch_t;
+
 static void noteOff(gpointer data, gpointer user_data)
 {
-	noteEvent_t *noteEvent = data;
+	MARK();
 
-	noteEvent->noteValue->snd_seq_event->dest = sequencer.snd_seq_addr;
-	noteEvent->noteValue->snd_seq_event->type = SND_SEQ_EVENT_NOTEOFF;
-	snd_seq_event_output(sequencer.snd_seq,
-	  (snd_seq_event_t *) noteEvent->noteValue->snd_seq_event);
+	midiMessage_t *midiMessage = NULL;
+	noteEvent_t *noteEvent = (noteEvent_t *) data;
+	crutch_t *crutch = (crutch_t *) user_data;
+	lockContext_t *lockContext = crutch->lockContext;
+	err_t *e = crutch->e;
+
+	midiMessage = getNoteOffMidiMessage(noteEvent);
+	terror(fireMidiMessage(lockContext, midiMessage, e))
+	midiMessage = NULL;
+
 	noteEvent->off.noteOffLink = NULL;
+
+finish:
+	free(midiMessage);
 }
 
 void allNotesOff(lockContext_t *lockContext, gboolean alreadyLocked, err_t *e)
 {
+	MARK();
+
 	defineError();
 
-	uint32_t locks = (LOCK_SEQUENCER | LOCK_DATA);
+	crutch_t crutch;
 	gboolean unlock = FALSE;
+	uint32_t locks = (LOCK_SEQUENCER | LOCK_DATA);
 
 	if (alreadyLocked) {
 		terror(requireLocks(lockContext, locks, e))
@@ -858,8 +845,9 @@ void allNotesOff(lockContext_t *lockContext, gboolean alreadyLocked, err_t *e)
 		unlock = TRUE;
 	}
 
-	g_slist_foreach((GSList *) notesOff.value, noteOff, NULL);
-	snd_seq_drain_output(sequencer.snd_seq);
+	crutch.lockContext = lockContext;
+	crutch.e = e;
+	terror(g_slist_foreach((GSList *) notesOff.value, noteOff, &crutch))
 	g_slist_free((GSList *) notesOff.value);
 	notesOff.value = NULL;
 
@@ -871,13 +859,17 @@ finish:
 
 void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 {
+	MARK();
+
 	uint32_t lastUserstep = NR_USERSTEPS(pattern) - 1;
 	uint32_t start = (bar * NR_USERSTEPS_PER_BAR(pattern));
 	uint32_t end = (start + NR_USERSTEPS_PER_BAR(pattern));
+	uint32_t nrVelocities = IS_NOTE(pattern) ? NR_VELOCITIES(pattern) : 0;
 
 	for (uint32_t i = start; i < end; i++) {
 		noteUserStep_t *noteUserStep = NULL;
 		GSList *value = NULL;
+		GSList *velocity = NULL;
 		gboolean slide = FALSE;
 		uint32_t nrValues = NR_VALUES(pattern);
 		void *step = USERSTEP_AT(pattern, i);
@@ -887,8 +879,8 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 				if ((rand() % 2) == 0) {
 					continue;
 				}
-				setDummyStep(pattern, step,
-				  !IS_SET(step, TYPE(pattern)), lockContext, NULL);
+				setDummyStep(pattern, (dummyUserStep_t *) step,
+				  !IS_SET((dummyUserStep_t *) step, TYPE(pattern)), lockContext, NULL);
 				continue;
 			}
 			if (!anyChildStepSet(pattern, i)) {
@@ -896,15 +888,15 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 			}
 			uint32_t idx = (rand() % nrValues);
 			value = g_slist_nth(VALUES(pattern), idx);
-			if (value == VALUE(step, TYPE(pattern))) {
-				continue;
-			}
 			if (IS_CONTROLLER(pattern)) {
 				setControllerStep(pattern,
-				  step, value, i, lockContext, NULL);
+				  (controllerUserStep_t *) step, value, i, lockContext, NULL);
 				continue;
 			}
-			setNoteStep(pattern, step, value, i, lockContext, TRUE, NULL);
+			idx = (value != NULL) ? (rand() % nrVelocities) : nrVelocities;
+			velocity = g_slist_nth(VELOCITIES(pattern), idx);
+			setNoteStep(pattern, (noteUserStep_t *) step, value, velocity, i,
+			  lockContext, TRUE, NULL);
 
 		} else if (!IS_NOTE(pattern)) {
 			continue;
@@ -916,7 +908,7 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 		if (i >= lastUserstep) {
 			continue;
 		}
-		noteUserStep = USERSTEP_AT(pattern, i);
+		noteUserStep = (noteUserStep_t *) USERSTEP_AT(pattern, i);
 		if (noteUserStep->slideLocked) {
 			continue;
 		}
@@ -924,19 +916,27 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 		if (HAS_SLIDE(step, TYPE(pattern)) == slide) {
 			continue;
 		}
-		setSlide(pattern, step, slide, i, lockContext, TRUE, NULL);
+		setSlide(pattern, (noteUserStep_t *) step,
+		  slide, i, lockContext, TRUE, NULL);
 	}
 }
 
 gboolean getLocked(gboolean *unlockable,
   void *step, pattern_t *pattern, uint32_t idx)
 {
+	MARK();
+
 	gboolean result = FALSE;
+	uint32_t nrValues = NR_VALUES(pattern);
+
+	if (IS_NOTE(pattern)) {
+		nrValues *= NR_VELOCITIES(pattern);
+	}
 
 	if ((!IS_SET(step, TYPE(pattern)))&&(!(IS_ROOT(pattern)))) {
 		result = !IS_SET(PARENTSTEP(pattern, idx), TYPE(PARENT(pattern)));
 	}
-	if ((!result)&&(IS_SET(step, TYPE(pattern))&&(NR_VALUES(pattern) < 2))) {
+	if ((!result)&&(IS_SET(step, TYPE(pattern))&&(nrValues < 2))) {
 		result = anyChildStepSet(pattern, idx);
 	}
 	if (unlockable != NULL) {

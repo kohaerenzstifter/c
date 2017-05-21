@@ -130,7 +130,9 @@ static void setupSequencer(err_t *e)
 	terror(failIfFalse((sequencer.myPort =
 	  snd_seq_create_simple_port(sequencer.snd_seq, "ksequencerd",
 	  SND_SEQ_PORT_CAP_WRITE |
-	  SND_SEQ_PORT_CAP_SUBS_WRITE,
+	  SND_SEQ_PORT_CAP_SUBS_WRITE |
+	  SND_SEQ_PORT_CAP_READ |
+	  SND_SEQ_PORT_CAP_SUBS_READ,
 	  SND_SEQ_PORT_TYPE_MIDI_GENERIC |
 	  SND_SEQ_PORT_TYPE_APPLICATION)) >= 0))
 

@@ -8,10 +8,19 @@
 #include <unistd.h>
 #include <stdint.h>
 
+#ifdef __cplusplus
+	#include <string>
+extern "C" {
+#endif
+
 
 typedef struct _err {
 	gboolean failed;
+#ifdef __cplusplus
+	std::string file;
+#else
 	char *file;
+#endif
 	int line;
 } err_t;
 
@@ -61,7 +70,7 @@ int parseInteger(char *parseMe, gboolean isSigned, err_t *e);
 
 void daemonize(err_t *e);
 
-void setOutput(char *out, char *error, err_t *e);
+void setOutput(const char *out, const char *error, err_t *e);
 
 char *readFile(char *path, err_t *e);
 
@@ -69,5 +78,9 @@ FILE *getErrFile(void);
 FILE *getOutFile(void);
 
 #define ARRAY_SIZE(a) (sizeof(a) / sizeof(a[0]))
+
+#ifdef __cplusplus
+};
+#endif
 
 #endif /* KOHAERENZSTIFTUNG_H_ */
