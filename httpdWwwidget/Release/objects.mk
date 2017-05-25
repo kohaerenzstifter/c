@@ -2,16 +2,7 @@
 # Automatically-generated file. Do not edit!
 ################################################################################
 
-O_SRCS := 
-C_SRCS := 
-S_UPPER_SRCS := 
-OBJ_SRCS := 
-ASM_SRCS := 
-OBJS := 
-C_DEPS := 
-ARCHIVES := 
+USER_OBJS :=
 
-# Every subdirectory with source files must be described here
-SUBDIRS := \
-. \
+LIBS := -lkohaerenzstiftung $(shell pkg-config --libs glib-2.0)
 

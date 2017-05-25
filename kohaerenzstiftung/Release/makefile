@@ -22,19 +22,26 @@ endif
 # Add inputs and outputs from these tool invocations to the build variables 
 
 # All Target
-all: libkohaerenzstiftung.a
+all: libkohaerenzstiftung.a libkohaerenzstiftung.so
 
 # Tool invocations
 libkohaerenzstiftung.a: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC Archiver'
-	ar -r  "libkohaerenzstiftung.a" $(OBJS) $(USER_OBJS) $(LIBS)
+	ar -r  "libkohaerenzstiftung.a" $(OBJS) $(USER_OBJS)
+	@echo 'Finished building target: $@'
+	@echo ' '
+
+libkohaerenzstiftung.so: $(OBJS) $(USER_OBJS)
+	@echo 'Building target: $@'
+	@echo 'Invoking: GCC C Linker'
+	gcc -shared -o "libkohaerenzstiftung.so" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) $(OBJS)$(C_DEPS)$(ARCHIVES) libkohaerenzstiftung.a
+	-$(RM) $(OBJS) $(C_DEPS) $(ARCHIVES) $(LIBRARIES) libkohaerenzstiftung.a libkohaerenzstiftung.so
 	-@echo ' '
 
 .PHONY: all clean dependents

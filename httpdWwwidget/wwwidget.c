@@ -2,13 +2,13 @@
  ============================================================================
  Name        : wwwidget.c
  Author      : Martin Knappe (martin.knappe@gmail.com)
- Version     : 0.11
+ Version     : 1.0
  Copyright   : Your copyright notice
  Description : Plugin for my "httpd" http(s) server
  
  Note        : The following commands must exist (and work!):
  
- xvfb-run, cutycapt, convert (imagemagick) => See code below
+ xvfb-run, convert (imagemagick) => See code below
  
  
  Test with the following command:
@@ -31,10 +31,7 @@
 
 static char *mustPassword = NULL;
 
-static void getScreenshot(char *url, int displayWidth,
-		int displayHeight, int colorDepth, char *tempDir, err_t *e)
-{
-	mark();
+FUNCTION(getScreenshot, void, PRIVATE, (char *url, int displayWidth, int displayHeight, int colorDepth, char *tempDir, err_t *e),
 	colorDepth = 8;
 	int status = 0;
 	char *stdoutBuf = NULL;
@@ -45,10 +42,9 @@ static void getScreenshot(char *url, int displayWidth,
 			"cutycapt --url=%s --out=%s/entire.jpg",
 			url, tempDir))
 	if (status != 0) {
-		FILE *file = (errFile != NULL) ? errFile : stderr;
-		fprintf(file, "stdoutBuf: %s\n",
+		fprintf(getErrFile(), "stdoutBuf: %s\n",
 				stdoutBuf != NULL ? stdoutBuf : "<NULL>");
-		fprintf(file, "stderrBuf: %s\n",
+		fprintf(getErrFile(), "stderrBuf: %s\n",
 				stderrBuf != NULL ? stderrBuf : "<NULL>");
 	}
 
@@ -56,13 +52,9 @@ finish:
 	free(stdoutBuf);
 	free(stderrBuf);
 	return;
-}
+)
 
-static char *getFragment(char *directory, uint32_t x,
-		uint32_t width, uint32_t y, uint32_t height, err_t *e)
-{
-	mark();
-
+FUNCTION(getFragment, char *, PRIVATE, (char *directory, uint32_t x, uint32_t width, uint32_t y, uint32_t height, err_t *e),
 	int status = 0;
 	static char result[PATH_MAX];
 
@@ -77,14 +69,9 @@ static char *getFragment(char *directory, uint32_t x,
 
 finish:
 	return result;
-}
+)
 
-static void wwwidgetGet(char *url, int fromParent, int toParent,
-		GList *requestHeaders, GList *requestParameters, gboolean *responseQueued,
-		err_t *e)
-{
-	mark();
-
+FUNCTION(wwwidgetGet, void, PRIVATE, (char *url, int fromParent, int toParent, GList *requestHeaders, GList *requestParameters, gboolean *responseQueued, err_t *e),
 	char *urlWanted = NULL;
 	char tempDir[] = "/tmp/tempXXXXXX";
 	gboolean haveTempDir = FALSE;
@@ -159,10 +146,9 @@ finish:
 		runSync(NULL, "rm -rf %s", tempDir);
 	}
 	return;
-}
+)
 
-static void wwwidgetAuthenticate(struct MHD_Connection *connection, err_t *e)
-{
+FUNCTION(wwwidgetAuthenticate, void, PRIVATE, (struct MHD_Connection *connection, err_t *e),
 	char *username = NULL;
 	char *password = NULL;
 	gboolean ok = FALSE;
@@ -181,15 +167,13 @@ finish:
 	free(username);
 	free(password);
 	return;
-}
+)
 
-static void teardown(void)
-{
+FUNCTION(teardown, void, PRIVATE, (void),
 	free(mustPassword);
-}
+)
 
-static void setup(GList *keyValuePairs, err_t *e)
-{
+FUNCTION(setup, void, PRIVATE, (GList *keyValuePairs, err_t *e),
 	char *password = NULL;
 
 	terror(password = getValue(keyValuePairs, "password", e))
@@ -198,12 +182,11 @@ static void setup(GList *keyValuePairs, err_t *e)
 
 finish:
 	return;
-}
+)
 
-void startRegistry(err_t *e)
-{
+FUNCTION(startRegistry, void, PUBLIC, (err_t *e),
 	terror(registerPlugin("wwwidget", setup, teardown, NULL, NULL,
 			&wwwidgetGet, NULL, &wwwidgetAuthenticate, e))
 finish:
 	return;
-}
+)

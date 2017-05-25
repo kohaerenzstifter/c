@@ -17,7 +17,7 @@ C_DEPS += \
 src/%.o: ../src/%.c
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C Compiler'
-	gcc -I"/home/sancho/git/c/kohaerenzstiftung" -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I/usr/include/glib-2.0/ -O0 -g3 -Wall -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -o "$@" "$<"
+	gcc -I"$(KOHAERENZSTIFTUNG_PATH)" $(shell pkg-config --cflags glib-2.0) -O0 -g3 -Wno-deprecated-declarations -Wall -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '
 

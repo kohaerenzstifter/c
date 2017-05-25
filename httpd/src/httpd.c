@@ -2,7 +2,7 @@
  ============================================================================
  Name        : httpd.c
  Author      : Martin Knappe (martin.knappe@gmail.com)
- Version     : 0.84
+ Version     : 1.0.1
  Copyright   : Your copyright notice
  Description : Simple preforking http(s) server made with libmycrohttpd
  ============================================================================
@@ -28,6 +28,28 @@
 #include <dlfcn.h>
 
 #include <kohaerenzstiftung.h>
+
+//#define DEBUG_PARENT 1
+//#define DEBUG_CHILD 1
+
+#if defined DEBUG_PARENT
+#define DEBUG 1
+#elif defined DEBUG_CHILD
+#define DEBUG 1
+#endif
+
+#ifdef DEBUG_PARENT
+#define LOG_PARENT TRUE
+#else
+#define LOG_PARENT FALSE
+#endif
+
+#ifdef DEBUG_CHILD
+#define LOG_CHILD TRUE
+#else
+#define LOG_CHILD FALSE
+#endif
+
 #include "httpd.h"
 
 #define STATE_DEAD 0
@@ -71,6 +93,7 @@ typedef struct _service {
 	handlerFunc_t getHandler;
 	handlerFunc_t deleteHandler;
 	authenticateFunc_t authenticate;
+	gboolean isSetup;
 } service_t;
 
 typedef struct _connection {
@@ -101,31 +124,10 @@ static time_t reloadPluginsAt = 0;
 //static sigset_t signalsBlocked;
 //static sigset_t signalsAllowed;
 
-//#define DEBUG_PARENT 1
-//#define DEBUG_CHILD 1
 
-#if defined DEBUG_PARENT
-#define DEBUG 1
-#elif defined DEBUG_CHILD
-#define DEBUG 1
-#endif
 
-#ifdef DEBUG_PARENT
-#define LOG_PARENT TRUE
-#else
-#define LOG_PARENT FALSE
-#endif
-
-#ifdef DEBUG_CHILD
-#define LOG_CHILD TRUE
-#else
-#define LOG_CHILD FALSE
-#endif
-
-static void writeBytes(int fd, void *buffer, uint32_t len, err_t *e)
-{
-	mark();
-
+FUNCTION(writeBytes, void, PUBLIC, (int fd, void *buffer, uint32_t len,
+  err_t *e),
 	uint32_t bytesPending = len;
 	void *cur = buffer;
 	int32_t justWritten = 0;
@@ -141,23 +143,17 @@ static void writeBytes(int fd, void *buffer, uint32_t len, err_t *e)
 	}
 finish:
 	return;
-}
+)
 
-static void writeStatus(int toParent, uint32_t status,
-		err_t *e)
-{
-	mark();
-
+FUNCTION(writeStatus, void, PRIVATE, (int toParent, uint32_t status, err_t *e),
 	terror(writeBytes(toParent, &status, sizeof(status), e))
 finish:
 	return;
-}
+)
 
-static void writeKeyValuePair(int toParent,
-		keyValuePair_t *keyValuePair, err_t *e)
-{
-	mark();
-
+ 
+FUNCTION(writeKeyValuePair, void, PRIVATE, (int toParent,
+  keyValuePair_t *keyValuePair, err_t *e),
 	uint32_t keySize = 0;
 	uint32_t valueSize = 0;
 
@@ -169,13 +165,11 @@ static void writeKeyValuePair(int toParent,
 	terror(writeBytes(toParent, keyValuePair->value, valueSize, e))
 finish:
 	return;
-}
+)
 
-static void writeKeyValuePairs(GList *keyValuePairs,
-		int toParent, err_t *e)
-{
-	mark();
-
+  
+FUNCTION(writeKeyValuePairs, void, PRIVATE, (GList *keyValuePairs,
+  int toParent, err_t *e),
 	uint32_t count = 0;
 	GList *cur = NULL;
 	keyValuePair_t *keyValuePair = NULL;
@@ -190,13 +184,11 @@ static void writeKeyValuePairs(GList *keyValuePairs,
 	}
 finish:
 	return;
-}
+)
 
-void respondFromFile(int toParent, uint32_t status, char *path,
-		gboolean *responseQueued, err_t *e)
-{
-	mark();
-
+ 
+FUNCTION(respondFromFile, void, PUBLIC, (int toParent, uint32_t status,
+  char *path, gboolean *responseQueued, err_t *e),
 	size_t justRead = -1;
 	int fd = -1;
 	char buffer[4096];
@@ -223,28 +215,26 @@ finish:
 		close(fd);
 	}
 	return;
-}
+)
 
-void respondFromBuffer(int toParent, uint32_t status, void *buffer,
-		uint32_t len, gboolean *responseQueued, err_t *e)
-{
-	mark();
+FUNCTION(respondFromBuffer, void, PUBLIC, (int toParent, uint32_t status,
+  void *buffer, uint32_t len, gboolean *responseQueued, err_t *e),
+
+	*responseQueued = TRUE;
 
 	terror(writeStatus(toParent, status, e))
 	terror(writeKeyValuePairs(responseHeaders, toParent, e))
 	terror(writeBytes(toParent, buffer, len, e))
-	*responseQueued = TRUE;
+
 finish:
 	return;
-}
+)
 
-static void respondFromError(int toParent, err_t *err)
-{
-	mark();
-
+FUNCTION(respondFromError, void, PRIVATE, (int toParent, err_t *err),
 	err_t error;
 	err_t *e = &error;
 	char *errString = NULL;
+
 	initErr(e);
 	terror(writeStatus(toParent, hasFailed(err) ?
 			MHD_HTTP_INTERNAL_SERVER_ERROR : MHD_HTTP_OK, e));
@@ -253,12 +243,9 @@ static void respondFromError(int toParent, err_t *err)
 	terror(writeBytes(toParent, errString, strlen(errString) + 1, e))
 finish:
 	return;
-}
+)
 
-char *getValue(GList *keyValuePairs, char *key, err_t *e)
-{
-	mark();
-
+FUNCTION(getValue, char *, PUBLIC, (GList *keyValuePairs, char *key, err_t *e),
 	GList *cur = NULL;
 	keyValuePair_t *keyValuePair = NULL;
 	keyValuePair_t *theKeyValuePair = NULL;
@@ -279,13 +266,10 @@ char *getValue(GList *keyValuePairs, char *key, err_t *e)
 
 finish:
 	return result;
-}
+)
 
-static void readBytes(int fd, void *buffer, uint32_t len,
-		err_t *e)
-{
-	mark();
-
+FUNCTION(readBytes, void, PRIVATE, (int fd, void *buffer,
+  uint32_t len, err_t *e),
 	uint32_t bytesPending = len;
 	void *cur = buffer;
 	int32_t justRead = 0;
@@ -293,7 +277,8 @@ static void readBytes(int fd, void *buffer, uint32_t len,
 	while (bytesPending > 0) {
 		justRead = read(fd, cur, bytesPending);
 		if (justRead < 1) {
-			terror(failIfFalse(((justRead == 0)||(errno == EINTR))))
+			terror(failIfFalse(((justRead == 0)||
+				(errno == EINTR)||(errno == EAGAIN))))
 					continue;
 		}
 		bytesPending -= justRead;
@@ -301,21 +286,15 @@ static void readBytes(int fd, void *buffer, uint32_t len,
 	}
 finish:
 	return;
-}
+)
 
-static void freeKeyValuePair(keyValuePair_t *keyValuePair)
-{
-	mark();
-
+FUNCTION(freeKeyValuePair, void, PRIVATE, (keyValuePair_t *keyValuePair),
 	free(keyValuePair->key);
 	free(keyValuePair->value);
 	free(keyValuePair);
-}
+)
 
-static void freeKeyValuePairs(GList *headers)
-{
-	mark();
-
+FUNCTION(freeKeyValuePairs, void, PRIVATE, (GList *headers),
 	GList *cur = NULL;
 	keyValuePair_t *keyValuePair = NULL;
 
@@ -326,12 +305,9 @@ static void freeKeyValuePairs(GList *headers)
 	if (headers != NULL) {
 		g_list_free(headers);
 	}
-}
+)
 
-static gboolean isUrlEncoded(GList *requestHeaders, err_t *e)
-{
-	mark();
-
+FUNCTION(isUrlEncoded, gboolean, PRIVATE, (GList *requestHeaders, err_t *e),
 	char *contentType = NULL;
 	gboolean result = FALSE;
 
@@ -341,12 +317,9 @@ static gboolean isUrlEncoded(GList *requestHeaders, err_t *e)
 			"application/x-www-form-urlencoded") == 0);
 finish:
 	return result;
-}
+)
 
-static keyValuePair_t *readKeyValuePair(int fd, err_t *e)
-{
-	mark();
-
+FUNCTION(readKeyValuePair, keyValuePair_t *, PRIVATE, (int fd, err_t *e),
 	keyValuePair_t *_result = NULL;
 	keyValuePair_t *result = NULL;
 	uint32_t keyLength = 0;
@@ -365,17 +338,15 @@ finish:
 		freeKeyValuePair(_result);
 	}
 	return result;
-}
+)
 
-static GList *readKeyValuePairs(int fd, err_t *e)
-{
-	mark();
-
+FUNCTION(readKeyValuePairs, GList *, PRIVATE, (int fd, err_t *e),
 	GList *result = NULL;
 	GList *_result = NULL;
 	uint32_t count = 0;
 	keyValuePair_t *keyValuePair = NULL;
 	uint32_t i = 0;
+
 	terror(readBytes(fd, &count, sizeof(count), e))
 
 	for (i = 0; i < count; i++) {
@@ -388,37 +359,26 @@ finish:
 		freeKeyValuePairs(_result);
 	}
 	return result;
-}
+)
 
 static GList *libraries = NULL;
 static GList *tmpServices = NULL;
 static GList *services = NULL;
 
 
-static void processSignal(int signum)
-{
-	mark();
-
+FUNCTION(processSignal, void, PRIVATE, (int signum),
 	if (signum == SIGALRM) {
 		sigAlrm = TRUE;
 	} else {
 		sigTerm = TRUE;
 	}
-}
+)
 
-static void doSignals()
-{
-	mark();
-
+FUNCTION(doSignals, void, PRIVATE, (void),
 	sigset_t signalsBlocked;
 	struct sigaction action;
 
 	sigfillset(&signalsBlocked);
-
-	/*sigfillset(&signalsAllowed);
-	sigdelset(&signalsAllowed, SIGTERM);
-	sigdelset(&signalsAllowed, SIGINT);
-	sigdelset(&signalsAllowed, SIGALRM);*/
 
 	action.sa_handler = &processSignal;
 	action.sa_mask = signalsBlocked;
@@ -430,14 +390,10 @@ static void doSignals()
 
 	action.sa_handler = SIG_IGN;
 	sigaction(SIGPIPE, &action, NULL);
-}
+)
 
-static handlerFunc_t validateRequest(struct MHD_Connection *con, char *url,
-		char **sUrl, const char *method, const char *version,
-		err_t *e)
-{
-	mark();
-
+FUNCTION(validateRequest, handlerFunc_t, PRIVATE, (struct MHD_Connection *con,
+  char *url, char **sUrl, const char *method, const char *version, err_t *e),
 	handlerFunc_t result = NULL;
 	service_t *service = NULL;
 	service_t *theService = NULL;
@@ -451,6 +407,7 @@ static handlerFunc_t validateRequest(struct MHD_Connection *con, char *url,
 	for (cur = services; cur != NULL; cur = g_list_next(cur)) {
 		service = cur->data;
 		if (strcmp(service->name, serviceUrl) == 0) {
+			terror(failIfFalse(service->isSetup))
 			theService = service;
 			break;
 		}
@@ -480,15 +437,11 @@ finish:
 	free(serviceUrl);
 	g_strfreev(split);
 	return result;
-}
+)
 
-static int postDataIterator(void *cls, enum MHD_ValueKind kind,
-		const char *key, const char *filename,
-		const char *content_type, const char *transfer_encoding,
-		const char *data, uint64_t off, size_t size)
-{
-	mark();
-
+FUNCTION(postDataIterator, int, PRIVATE, (void *cls, enum MHD_ValueKind kind,
+  const char *key, const char *filename, const char *content_type,
+  const char *transfer_encoding, const char *data, uint64_t off, size_t size),
 	connection_t *connection = (connection_t *) cls;
 	GList *keyValuePairs = NULL;
 	handler_t *handler = NULL;
@@ -517,20 +470,18 @@ finish:
 		g_list_free(keyValuePairs);
 	}
 	return result;
-}
+)
 
-static int handleNewRequest(struct MHD_Connection *con,
-		const char *url, const char *method, const char *version,
-		void **con_cls, err_t *e)
-{
-	mark();
-
+FUNCTION(handleNewRequest, int, PRIVATE, (struct MHD_Connection *con,
+  const char *url, const char *method, const char *version,
+  void **con_cls, err_t *e),
 	int result = MHD_NO;
 	handlerFunc_t func;
 	char *shortUrl = NULL;
 	connection_t *connection = NULL;
 
-	terror(func = validateRequest(con, (char *) url, &shortUrl, method, version, e))
+	terror(func =
+	  validateRequest(con, (char *) url, &shortUrl, method, version, e))
 
 	connection = calloc(1, sizeof(connection_t));
 	connection->handler = NULL;
@@ -550,28 +501,26 @@ static int handleNewRequest(struct MHD_Connection *con,
 finish:
 	free(shortUrl);
 	return result;
-}
+)
 
-static void initHandler(handler_t *handler)
-{
-	mark();
-
+FUNCTION(initHandler, void, PRIVATE, (handler_t *handler),
 	handler->sigTermAt = -1;
-	close(handler->toHandler); handler->toHandler = -1;
-	close(handler->fromHandler); handler->fromHandler = -1;
+	if (handler->toHandler >= 0) {
+		close(handler->toHandler); handler->toHandler = -1;
+	}
+	if (handler->fromHandler >= 0) {
+		close(handler->fromHandler); handler->fromHandler = -1;
+	}
 	handler->pid = -1;
 	handler->state = STATE_DEAD;
 	handler->requestsHandled = 0;
 	handler->connection = NULL;
 
 	return;
-}
+)
 
-static void queueResponse(connection_t *connection, uint32_t status,
-		void* data, uint32_t size)
-{
-	mark();
-
+FUNCTION(queueResponse, void, PRIVATE, (connection_t *connection,
+  uint32_t status, void* data, uint32_t size),
 	struct MHD_Response *response = NULL;
 
 	if (connection->response.value != NULL) {
@@ -584,12 +533,10 @@ static void queueResponse(connection_t *connection, uint32_t status,
 
 finish:
 	return;
-}
+)
 
-static gboolean waitForHandler(handler_t *handler, gboolean hang)
-{
-	mark();
-
+FUNCTION(waitForHandler, gboolean, PRIVATE, (handler_t *handler,
+  gboolean hang),
 	gboolean result = FALSE;
 	int status = 0;
 	int options = hang ? 0 : WNOHANG;
@@ -631,12 +578,9 @@ finish:
 		initHandler(handler);
 	}
 	return result;
-}
+)
 
-static void sendSignal(handler_t *handler, gboolean sigKill)
-{
-	mark();
-
+FUNCTION(sendSignal, void, PRIVATE, (handler_t *handler, gboolean sigKill),
 	if (!sigKill) {
 		if (handler->sigTermAt == -1) {
 			kill(handler->pid, SIGTERM);
@@ -648,33 +592,24 @@ static void sendSignal(handler_t *handler, gboolean sigKill)
 	} else {
 		kill(handler->pid, SIGKILL);
 	}
-}
+)
 
-static void writeUrl(char *url, int fd, err_t *e)
-{
-	mark();
-
+FUNCTION(writeUrl, void, PRIVATE, (char *url, int fd, err_t *e),
 	uint32_t len = strlen(url) + 1;
 	terror(writeBytes(fd, &len, sizeof(len), e))
 	terror(writeBytes(fd, url, len, e))
 finish:
 	return;
-}
+)
 
-static void writeFunc(handlerFunc_t func, int fd, err_t *e)
-{
-	mark();
-
+FUNCTION(writeFunc, void, PRIVATE, (handlerFunc_t func, int fd, err_t *e),
 	terror(writeBytes(fd, &func, sizeof(func), e))
 finish:
 	return;
-}
+)
 
-static void notifyHandler(handler_t *handler, handlerFunc_t func,
-		char *url, GList *requestHeaders, GList *requestParameters, err_t *e)
-{
-	mark();
-
+FUNCTION(notifyHandler, void, PRIVATE, (handler_t *handler, handlerFunc_t func,
+  char *url, GList *requestHeaders, GList *requestParameters, err_t *e),
 	terror(writeFunc(func, handler->toHandler, e))
 	terror(writeUrl(url, handler->toHandler, e))
 	terror(writeKeyValuePairs(requestHeaders, handler->toHandler, e))
@@ -684,12 +619,9 @@ finish:
 	if (hasFailed(e)) {
 		sendSignal(handler, FALSE);
 	}
-}
+)
 
-static char *readUrl(int fd, err_t *e)
-{
-	mark();
-
+FUNCTION(readUrl, char *, PRIVATE, (int fd, err_t *e),
 	char *result = NULL;
 	char *_result = NULL;
 	uint32_t length = 0;
@@ -702,25 +634,19 @@ static char *readUrl(int fd, err_t *e)
 finish:
 	free(_result);
 	return result;
-}
+)
 
-static handlerFunc_t readFunc(int fd, err_t *e)
-{
-	mark();
-
+FUNCTION(readFunc, handlerFunc_t, PRIVATE, (int fd, err_t *e),
 	handlerFunc_t result = NULL;
+
 	terror(readBytes(fd, &result, sizeof(result), e));
 finish:
 	return result;
-}
+)
 
-
-
-static void execRequest(handlerFunc_t func, char *url, int fromParent,
-		int toParent, GList *requestHeaders, GList *requestParameters)
-{
-	mark();
-
+FUNCTION(execRequest, void, PRIVATE, (handlerFunc_t func, char *url,
+  int fromParent,int toParent, GList *requestHeaders,
+  GList *requestParameters),
 	gboolean responseQueued = FALSE;
 	err_t error;
 	err_t *e = &error;
@@ -732,12 +658,9 @@ static void execRequest(handlerFunc_t func, char *url, int fromParent,
 	if (!responseQueued) {
 		respondFromError(toParent, e);
 	}
-}
+)
 
-static void handlerFunc(int fromParent, int toParent)
-{
-	mark();
-
+FUNCTION(handlerFunc, void, PRIVATE, (int fromParent, int toParent),
 	handlerFunc_t func = NULL;
 	char *url = NULL;
 	err_t error;
@@ -767,7 +690,8 @@ static void handlerFunc(int fromParent, int toParent)
 		terror(requestHeaders = readKeyValuePairs(fromParent, e))
 		terror(requestParameters = readKeyValuePairs(fromParent, e))
 		//TODO: what about post processing?
-		execRequest(func, url, fromParent, toParent, requestHeaders, requestParameters);
+		execRequest(func, url, fromParent, toParent, requestHeaders,
+		  requestParameters);
 	}
 finish:
 	if (requestHeaders != NULL) {
@@ -778,15 +702,12 @@ finish:
 	}
 	free(url);
 	return;
-}
+)
 
-static void forkHandler(handler_t *handler, err_t *e)
-{
-	mark();
-
+FUNCTION(forkHandler, void, PRIVATE, (handler_t *handler, err_t *e),
 	pid_t pid = -1;
-	int pipe1[2] = {-1, -1};
-	int pipe2[2] = {-1, -1};
+	int pipe1[2] = {-1 _COMMA -1};
+	int pipe2[2] = {-1 _COMMA -1};
 	int fromParent = -1;
 	int toParent = -1;
 
@@ -836,12 +757,9 @@ finish:
 	close(pipe2[PIPE_READ]);
 	close(pipe2[PIPE_WRITE]);
 	return;
-}
+)
 
-static void forkHandlers(uint32_t howMany, err_t *e)
-{
-	mark();
-
+FUNCTION(forkHandlers, void, PRIVATE, (uint32_t howMany, err_t *e),
 	int i = 0;
 	int forked = 0;
 
@@ -856,13 +774,10 @@ static void forkHandlers(uint32_t howMany, err_t *e)
 	}
 finish:
 	return;
-}
+)
 
-static int addKeyValuePair(void *cls, enum MHD_ValueKind kind,
-		const char *key, const char *value)
-{
-	mark();
-
+FUNCTION(addKeyValuePair, int, PRIVATE, (void *cls, enum MHD_ValueKind kind,
+  const char *key, const char *value),
 	GList **keyValuePairs = (GList **) cls;
 	keyValuePair_t *keyValuePair = calloc(1, sizeof(keyValuePair_t));
 
@@ -872,37 +787,28 @@ static int addKeyValuePair(void *cls, enum MHD_ValueKind kind,
 	*keyValuePairs = g_list_append(*keyValuePairs, keyValuePair);
 
 	return MHD_YES;
-}
+)
 
-static GList *getRequestHeaders(struct MHD_Connection *con)
-{
-	mark();
-
+FUNCTION(getRequestHeaders, GList *, PRIVATE, (struct MHD_Connection *con),
 	GList *result = NULL;
 
 	MHD_get_connection_values(con, MHD_HEADER_KIND,
 			&addKeyValuePair, &result);
 
 	return result;
-}
+)
 
-static GList *getRequestParameters(struct MHD_Connection *con)
-{
-	mark();
-
+FUNCTION(getRequestParameters, GList *, PRIVATE, (struct MHD_Connection *con),
 	GList *result = NULL;
 
 	MHD_get_connection_values(con, MHD_GET_ARGUMENT_KIND,
 			&addKeyValuePair, &result);
 
 	return result;
-}
+)
 
-static gboolean assignHandler(connection_t *connection, gboolean mayFork,
-		err_t *e)
-{
-	mark();
-
+FUNCTION(assignHandler, gboolean, PRIVATE, (connection_t *connection,
+  gboolean mayFork, err_t *e),
 	gboolean result = FALSE;
 	int i = 0;
 	gboolean foundHandler = FALSE;
@@ -946,13 +852,10 @@ finish:
 		freeKeyValuePairs(requestParameters);
 	}
 	return result;
-}
+)
 
-static void feedDataToChild(connection_t *connection, const char *upload_data,
-		size_t *upload_data_size, err_t *e)
-{
-	mark();
-
+FUNCTION(feedDataToChild, void, PRIVATE, (connection_t *connection,
+  const char *upload_data, size_t *upload_data_size, err_t *e),
 	char *errString = NULL;
 
 	terror(writeBytes(connection->handler->toHandler, (char *) upload_data,
@@ -968,14 +871,10 @@ finish:
 		*upload_data_size = 0;
 	}
 	return;
-}
+)
 
-static int handleExistingRequest(connection_t *connection,
-		const char *upload_data,
-		size_t *upload_data_size, err_t *e)
-{
-	mark();
-
+FUNCTION(handleExistingRequest, int, PRIVATE, (connection_t *connection,
+  const char *upload_data, size_t *upload_data_size, err_t *e),
 	handler_t *handler = NULL;
 	int result = MHD_NO;
 	gboolean doCreatePostProcessor = FALSE;
@@ -983,12 +882,12 @@ static int handleExistingRequest(connection_t *connection,
 	if (connection->response.value == NULL) {
 		if (connection->handler == NULL) {
 			terror(doCreatePostProcessor =
-					assignHandler(connection, TRUE, e))
-					if (doCreatePostProcessor) {
-						connection->postProcessor =
-								MHD_create_post_processor(connection->con, 65536,
-										&postDataIterator, connection);
-					}
+			  assignHandler(connection, TRUE, e))
+			if (doCreatePostProcessor) {
+				connection->postProcessor =
+				  MHD_create_post_processor(connection->con, 65536,
+				  &postDataIterator, connection);
+			}
 		} else if ((*upload_data_size) > 0) {
 			if (connection->postProcessor == NULL) {
 				terror(feedDataToChild(connection, upload_data,
@@ -1021,14 +920,11 @@ static int handleExistingRequest(connection_t *connection,
 	result = MHD_YES;
 finish:
 	return result;
-}
+)
 
-static int handleRequest(void *cls, struct MHD_Connection *con,
-		const char *url, const char *method, const char *version,
-		const char *upload_data, size_t *upload_data_size, void **con_cls)
-{
-	mark();
-
+FUNCTION(handleRequest, int, PRIVATE, (void *cls, struct MHD_Connection *con,
+  const char *url, const char *method, const char *version,
+  const char *upload_data, size_t *upload_data_size, void **con_cls),
 	int result = MHD_NO;
 	connection_t *connection = NULL;
 	err_t error;
@@ -1039,17 +935,15 @@ static int handleRequest(void *cls, struct MHD_Connection *con,
 		terror(result = handleNewRequest(con, url, method, version, con_cls, e))
 	} else {
 		connection = (connection_t *) *con_cls;
-		terror(result = handleExistingRequest(connection, upload_data, upload_data_size, e))
+		terror(result = handleExistingRequest(connection, upload_data,
+		  upload_data_size, e))
 	}
 
 finish:
 	return result;
-}
+)
 
-static void finishConnection(connection_t *connection)
-{
-	mark();
-
+FUNCTION(finishConnection, void, PRIVATE, (connection_t *connection),
 	handler_t *handler = connection->handler;
 	if (handler != NULL) {
 		handler->connection = NULL;
@@ -1065,10 +959,9 @@ static void finishConnection(connection_t *connection)
 		MHD_destroy_response(connection->response.value);
 	}
 	free(connection);
-}
+)
 
-static void killChild(gboolean idleOnly)
-{
+FUNCTION(killChild, void, PRIVATE, (gboolean idleOnly),
 	int i = 0;
 	uint32_t requestsHandledMax = 0;
 
@@ -1102,22 +995,19 @@ static void killChild(gboolean idleOnly)
 			break;
 		}
 	}
-}
+)
 
-static void killChildren(uint32_t soMany, gboolean idleOnly, err_t *e)
-{
+FUNCTION(killChildren, void, PRIVATE, (uint32_t soMany,
+  gboolean idleOnly, err_t *e),
 	uint32_t i = 0;
 
 	for (i = 0; i < soMany; i++) {
 		killChild(idleOnly);
 	}
 
-}
+)
 
-static void minMaxChildren(err_t *e)
-{
-	mark();
-
+FUNCTION(minMaxChildren, void, PRIVATE, (err_t *e),
 	defineError();
 
 	uint32_t idleChildren = 0;
@@ -1151,13 +1041,10 @@ static void minMaxChildren(err_t *e)
 	}
 finish:
 	return;
-}
+)
 
-static void onRequestDone(void *cls, struct MHD_Connection *con,
-		void **con_cls, enum MHD_RequestTerminationCode toe)
-{
-	mark();
-
+FUNCTION(onRequestDone, void, PRIVATE, (void *cls, struct MHD_Connection *con,
+  void **con_cls, enum MHD_RequestTerminationCode toe),
 	connection_t *connection = (connection_t *) *con_cls;
 	handler_t *handler = NULL;
 
@@ -1177,16 +1064,22 @@ static void onRequestDone(void *cls, struct MHD_Connection *con,
 
 finish:
 	return;
-}
+)
 
-static struct MHD_Daemon *startDaemon(uint16_t port, char *caCert,
-		char *serverCert, char *serverKey, err_t *e)
-{
-	mark();
+FUNCTION(daemonLogger, void, PRIVATE, (void *cls, const char *fmt, va_list va),
+	DEBUG_WRAP(
+		vfprintf(getOutFile(), fmt, va);
+	)
+)
 
+FUNCTION(startDaemon, struct MHD_Daemon *, PRIVATE, (uint16_t port,
+  char *caCert, char *serverCert, char *serverKey, err_t *e),
 	struct MHD_Daemon *result = NULL;
+#ifdef DEBUG
 	uint32_t flags = MHD_USE_DEBUG;
-
+#else
+	uint32_t flags = 0;
+#endif
 	initErr(e);
 
 	if (caCert != NULL) {
@@ -1201,6 +1094,7 @@ static struct MHD_Daemon *startDaemon(uint16_t port, char *caCert,
 				MHD_OPTION_HTTPS_MEM_CERT, serverCert,
 				MHD_OPTION_HTTPS_MEM_KEY, serverKey,
 				MHD_OPTION_HTTPS_MEM_TRUST, caCert,
+				MHD_OPTION_EXTERNAL_LOGGER, &daemonLogger, NULL,
 				MHD_OPTION_END);
 	} else {
 		result = MHD_start_daemon(flags,
@@ -1210,29 +1104,25 @@ static struct MHD_Daemon *startDaemon(uint16_t port, char *caCert,
 				&handleRequest,
 				NULL,
 				MHD_OPTION_NOTIFY_COMPLETED, &onRequestDone, NULL,
+				MHD_OPTION_EXTERNAL_LOGGER, &daemonLogger, NULL,
 				MHD_OPTION_END);
 	}
 
 	terror(failIfFalse(result != NULL))
 finish:
 	return result;
-}
+)
 
-static void resetHandler(handler_t *handler)
-{
-	mark();
-
+FUNCTION(resetHandler, void, PRIVATE, (handler_t *handler),
 	handler->state = STATE_IDLE;
 	if (handler->connection != NULL) {
 		handler->connection->handler = NULL;
 		handler->connection = NULL;
 	}
-}
+)
 
-static ssize_t contentReaderCallback(void *cls, uint64_t pos, char *buf, size_t max)
-{
-	mark();
-
+FUNCTION(contentReaderCallback, ssize_t, PRIVATE, (void *cls, uint64_t pos,
+  char *buf, size_t max),
 	int result = 0;
 	connection_t *connection = cls;
 	int32_t justRead = 0;
@@ -1275,22 +1165,16 @@ static ssize_t contentReaderCallback(void *cls, uint64_t pos, char *buf, size_t 
 	}
 finish:
 	return result;
-}
+)
 
-static uint32_t readStatus(int fd, err_t *e)
-{
-	mark();
-
+FUNCTION(readStatus, uint32_t, PRIVATE, (int fd, err_t *e),
 	uint32_t result = 0;
 	terror(readBytes(fd, &result, sizeof(result), e))
 finish:
 	return result;
-}
+)
 
-static void queueResponseForHandler(handler_t *handler)
-{
-	mark();
-
+FUNCTION(queueResponseForHandler, void, PRIVATE, (handler_t *handler),
 	GList *responseHeaders = NULL;
 	err_t error;
 	err_t *e = &error;
@@ -1334,12 +1218,9 @@ finish:
 	if (response != NULL) {
 		MHD_destroy_response(response);
 	}
-}
+)
 
-static gboolean reapChildren()
-{
-	mark();
-
+FUNCTION(reapChildren, gboolean, PRIVATE, (void),
 	gboolean childrenLeft = FALSE;
 	int i = 0;
 	gboolean mustDieNow = FALSE;
@@ -1363,54 +1244,14 @@ static gboolean reapChildren()
 	}
 
 	return childrenLeft;
-}
+)
 
-static char *readFile(char *path, err_t *e)
-{
-	mark();
-
-	FILE *file = NULL;
-	char buffer[1000];
-	size_t justRead = 0;
-	GString *gString = NULL;
-	char *result = NULL;
-
-	gString = g_string_new("");
-
-	terror(failIfFalse((file = fopen(path, "r")) != NULL))
-	for(;;) {
-		justRead = fread(buffer, 1, sizeof(buffer), file);
-		if (justRead < 1) {
-			terror(failIfFalse(feof(file)))
-					break;
-		}
-		g_string_append(gString, buffer);
-	}
-
-	result = gString->str;
-
-finish:
-	if (gString != NULL) {
-		g_string_free(gString, (result == NULL));
-	}
-	if (file != NULL) {
-		fclose(file);
-	}
-	return result;
-}
-
-static void freeService(service_t *service)
-{
-	mark();
-
+FUNCTION(freeService, void, PRIVATE, (service_t *service),
 	free(service->name);
 	free(service);
-}
+)
 
-static void freeServices(GList *services)
-{
-	mark();
-
+FUNCTION(freeServices, void, PRIVATE, (GList *services),
 	GList *cur = NULL;
 
 	for (cur = services; cur != NULL; cur = g_list_next(cur)) {
@@ -1421,31 +1262,24 @@ static void freeServices(GList *services)
 		freeService(cur->data);
 	}
 	g_list_free(services);
-}
+)
 
-static void freeLibraries(GList *services)
-{
-	mark();
-
+FUNCTION(freeLibraries, void, PRIVATE, (GList *services),
 	GList *cur = NULL;
 
 	for (cur = services; cur != NULL; cur = g_list_next(cur)) {
 		dlclose(cur->data);
 	}
 	g_list_free(services);
-}
+)
 
-static void unloadPlugins()
-{
-	mark();
-
+FUNCTION(unloadPlugins, void, PRIVATE, (void),
 	freeServices(services);
 	freeLibraries(libraries);
-}
+)
 
-static GList *getKeyValuePairs(GKeyFile *keyFile, char *name, err_t *e)
-{
-	mark();
+FUNCTION(getKeyValuePairs, GList *, PRIVATE, (GKeyFile *keyFile, char *name, err_t *e),
+	defineError();
 
 	GList *_result = NULL;
 	GList *result = NULL;
@@ -1483,28 +1317,26 @@ finish:
 		g_strfreev(keys);
 	}
 	return result;
-}
+)
 
-static void setupService(service_t *service, GKeyFile *keyFile, err_t *e)
-{
-	mark();
-
+FUNCTION(setupService, void, PRIVATE, (service_t *service, GKeyFile *keyFile, err_t *e),
 	GList *keyValuePairs = NULL;
 
-	terror(keyValuePairs = getKeyValuePairs(keyFile, service->name, e))
+	terror(keyValuePairs = getKeyValuePairs(keyFile, service->name, NULL))
+	if (keyValuePairs == NULL) {
+		goto finish;
+	}
 
 	terror(service->setup(keyValuePairs, e))
+	service->isSetup = TRUE;
 
 finish:
 	if (keyValuePairs != NULL) {
 		freeKeyValuePairs(keyValuePairs);
 	}
-}
+)
 
-static gboolean reloadPlugins(GKeyFile *keyFile, err_t *e)
-{
-	mark();
-
+FUNCTION(reloadPlugins, gboolean, PRIVATE, (GKeyFile *keyFile, err_t *e),
 	defineError();
 
 	gboolean result = FALSE;
@@ -1563,20 +1395,10 @@ finish:
 		closedir(directory);
 	}
 	return result;
-}
+)
 
-void registerPlugin(char *name,
-		setupFunc_t setup,
-		teardownFunc_t teardown,
-		handlerFunc_t putHandler,
-		handlerFunc_t postHandler,
-		handlerFunc_t getHandler,
-		handlerFunc_t deleteHandler,
-		authenticateFunc_t authenticate,
-		err_t *e)
-{
-	mark();
-
+ 
+FUNCTION(registerPlugin, void, PUBLIC, (char *name, setupFunc_t setup, teardownFunc_t teardown, handlerFunc_t putHandler, handlerFunc_t postHandler, handlerFunc_t getHandler, handlerFunc_t deleteHandler, authenticateFunc_t authenticate, err_t *e),
 	GList *cur = NULL;
 	service_t *service = NULL;
 
@@ -1595,17 +1417,15 @@ void registerPlugin(char *name,
 	service->name = strdup(name);
 	service->postHandler = postHandler;
 	service->putHandler = putHandler;
+	service->isSetup = FALSE;
 
 	tmpServices = g_list_append(tmpServices, service);
 
 finish:
 	return;
-}
+)
 
-int main(int argc, char *argv[])
-{
-	mark();
-
+FUNCTION(main, int, PUBLIC, (int argc, char *argv[]),
 	struct timeval tv;
 	int nfds = 0;
 	struct MHD_Daemon *d = NULL;
@@ -1637,32 +1457,32 @@ int main(int argc, char *argv[])
 
 	GOptionEntry optionEntries[] = {
 			{
-					"configFile",
-					'c',
-					0,
-					G_OPTION_ARG_STRING,
-					&configFile,
-					"configFile",
+					"configFile" _COMMA
+					'c' _COMMA
+					0 _COMMA
+					G_OPTION_ARG_STRING _COMMA
+					&configFile _COMMA
+					"configFile" _COMMA
 					NULL
-			},
+			} _COMMA
 			{
-					"daemonize",
-					'd',
-					0,
-					G_OPTION_ARG_NONE,
-					&doDaemonize,
-					"daemonize",
+					"daemonize" _COMMA
+					'd' _COMMA
+					0 _COMMA
+					G_OPTION_ARG_NONE _COMMA
+					&doDaemonize _COMMA
+					"daemonize" _COMMA
 					NULL
-			},
+			} _COMMA
 			{
-					"logDirectory",
-					'l',
-					0,
-					G_OPTION_ARG_STRING,
-					&logDirectory,
-					"logDirectory",
+					"logDirectory" _COMMA
+					'l' _COMMA
+					0 _COMMA
+					G_OPTION_ARG_STRING _COMMA
+					&logDirectory _COMMA
+					"logDirectory" _COMMA
 					NULL
-			},
+			} _COMMA
 			{
 					NULL
 			}
@@ -1772,7 +1592,7 @@ int main(int argc, char *argv[])
 				}
 			}
 		}
-		childrenLeft = reapChildren(FALSE);
+		childrenLeft = reapChildren();
 		tv.tv_sec = 1;
 		tv.tv_usec = 0;
 		nfds = 0;
@@ -1780,7 +1600,7 @@ int main(int argc, char *argv[])
 		FD_ZERO(&ws);
 		FD_ZERO(&es);
 		if (MHD_get_fdset(d, &rs, &ws, &es, &nfds) != MHD_YES) {
-			fprintf(errFile, "unable to MHD_get_fdset()\n");
+			fprintf(getErrFile(), "unable to MHD_get_fdset()\n");
 			sleep(5);
 			continue;
 		}
@@ -1830,6 +1650,5 @@ finish:
 	free(caCert);
 	free(serverCert);
 	free(serverKey);
-	closeOutput();
 	return EXIT_SUCCESS;
-}
+)

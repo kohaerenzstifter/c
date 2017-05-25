@@ -4,5 +4,5 @@
 
 USER_OBJS := 
 
-LIBS := -lkohaerenzstiftung -lglib-2.0 -ldl -lmicrohttpd
+LIBS := $(KOHAERENZSTIFTUNG_PATH)/Debug/libkohaerenzstiftung.a $(shell pkg-config --libs glib-2.0) -ldl -lmicrohttpd
 

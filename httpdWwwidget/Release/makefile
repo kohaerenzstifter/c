@@ -6,6 +6,9 @@ ifneq ($(MAKECMDGOALS),clean)
 ifndef KOHAERENZSTIFTUNG_PATH
 $(error Environment variable KOHAERENZSTIFTUNG_PATH not set)
 endif
+ifndef HTTPD_PATH
+$(error Environment variable HTTPD_PATH not set)
+endif
 endif
 
 -include ../makefile.init
@@ -14,8 +17,6 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
--include src/commands/subdir.mk
--include src/subdir.mk
 -include subdir.mk
 -include objects.mk
 
@@ -30,22 +31,19 @@ endif
 # Add inputs and outputs from these tool invocations to the build variables 
 
 # All Target
-all: docs
-
-dependents:
-	-cd $(KOHAERENZSTIFTUNG_PATH)/Debug && $(MAKE) clean all
+all: libhttpdWwwidget.so
 
 # Tool invocations
-docs: $(OBJS) $(USER_OBJS) $(OBJS)
+libhttpdWwwidget.so: $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C Linker'
-	gcc -o "docs" $(OBJS) $(USER_OBJS) $(LIBS)
+	gcc -L"$(KOHAERENZSTIFTUNG_PATH)/Release" -shared -o "libhttpdWwwidget.so" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) $(OBJS)$(C_DEPS)$(EXECUTABLES) docs
+	-$(RM) $(OBJS)$(C_DEPS)$(LIBRARIES) libhttpdWwwidget.so
 	-@echo ' '
 
 .PHONY: all clean dependents

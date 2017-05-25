@@ -2,7 +2,17 @@
 # Automatically-generated file. Do not edit!
 ################################################################################
 
-USER_OBJS :=
+O_SRCS := 
+C_SRCS := 
+S_UPPER_SRCS := 
+OBJ_SRCS := 
+ASM_SRCS := 
+OBJS := 
+C_DEPS := 
+EXECUTABLES := 
 
-LIBS := $(KOHAERENZSTIFTUNG_PATH)/Debug/libkohaerenzstiftung.a $(shell pkg-config --libs glib-2.0)
+# Every subdirectory with source files must be described here
+SUBDIRS := \
+src/plugins \
+src \
 

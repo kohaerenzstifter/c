@@ -2,6 +2,15 @@
 # Automatically-generated file. Do not edit!
 ################################################################################
 
+ifneq ($(MAKECMDGOALS),clean)
+ifndef KOHAERENZSTIFTUNG_PATH
+$(error Environment variable KOHAERENZSTIFTUNG_PATH not set)
+endif
+ifndef HTTPD_PATH
+$(error Environment variable HTTPD_PATH not set)
+endif
+endif
+
 -include ../makefile.init
 
 RM := rm -rf
@@ -25,7 +34,7 @@ endif
 all: libhttpdWwwidget.so
 
 # Tool invocations
-libhttpdWwwidget.so: $(OBJS) $(USER_OBJS)
+libhttpdWwwidget.so: $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C Linker'
 	gcc -shared -o "libhttpdWwwidget.so" $(OBJS) $(USER_OBJS) $(LIBS)
@@ -39,5 +48,6 @@ clean:
 
 .PHONY: all clean dependents
 .SECONDARY:
+$(LIBS):
 
 -include ../makefile.targets

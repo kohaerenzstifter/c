@@ -4,20 +4,20 @@
 
 # Add inputs and outputs from these tool invocations to the build variables 
 C_SRCS += \
-../src/docs.c 
+../kohaerenzstiftung.c 
 
 OBJS += \
-./src/docs.o 
+./kohaerenzstiftung.o 
 
 C_DEPS += \
-./src/docs.d 
+./kohaerenzstiftung.d 
 
 
 # Each subdirectory must supply rules for building sources it contributes
-src/%.o: ../src/%.c
+%.o: ../%.c
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C Compiler'
-	gcc -I"$(KOHAERENZSTIFTUNG_PATH)" $(shell pkg-config --cflags glib-2.0) -O0 -g3 -Wall -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -o "$@" "$<"
+	gcc -fPIC $(shell pkg-config --cflags glib-2.0) -O3 -Wall -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@:%.o=%.d)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '
 

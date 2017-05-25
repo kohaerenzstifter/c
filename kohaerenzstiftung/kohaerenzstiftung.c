@@ -2,7 +2,7 @@
  ============================================================================
  Name        : kohaerenzstiftung.c
  Author      : Martin Knappe (martin.knappe@gmail.com)
- Version     : 0.1
+ Version     : 0.3
  Copyright   : Your copyright notice
  Description : Simple helper library.
  ============================================================================

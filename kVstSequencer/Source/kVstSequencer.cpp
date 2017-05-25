@@ -633,7 +633,7 @@ static void cbFreePattern(gpointer data, gpointer user_data)
 	freePattern((pattern_t *) data);
 }
 
-void freePatternTODO(pattern_t *pattern, int line)
+void freePattern(pattern_t *pattern)
 {
 	MARK();
 

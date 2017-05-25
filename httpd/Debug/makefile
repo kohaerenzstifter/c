@@ -2,6 +2,12 @@
 # Automatically-generated file. Do not edit!
 ################################################################################
 
+ifneq ($(MAKECMDGOALS),clean)
+ifndef KOHAERENZSTIFTUNG_PATH
+$(error Environment variable KOHAERENZSTIFTUNG_PATH not set)
+endif
+endif
+
 -include ../makefile.init
 
 RM := rm -rf
@@ -30,10 +36,10 @@ dependents:
 	-cd /home/sancho/git/c/kohaerenzstiftung/Debug && $(MAKE) clean all
 
 # Tool invocations
-httpd: $(OBJS) $(USER_OBJS) /home/sancho/git/c/kohaerenzstiftung/Debug/libkohaerenzstiftung.so
+httpd: $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C Linker'
-	gcc -L"/home/sancho/git/c/kohaerenzstiftung/Debug" -rdynamic -o "httpd" $(OBJS) $(USER_OBJS) $(LIBS)
+	gcc -rdynamic -o "httpd" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -44,6 +50,6 @@ clean:
 
 .PHONY: all clean dependents
 .SECONDARY:
-/home/sancho/git/c/kohaerenzstiftung/Debug/libkohaerenzstiftung.so:
+$(LIBS):
 
 -include ../makefile.targets

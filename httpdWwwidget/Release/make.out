@@ -1,0 +1,10 @@
+Building file: ../wwwidget.c
+Invoking: GCC C Compiler
+gcc -I/usr/include/glib-2.0/ -I/usr/lib/x86_64-linux-gnu/glib-2.0/include -I"/home/sancho/Desktop/versioned/git/c/kohaerenzstiftung/" -I"/home/sancho/Desktop/versioned/git/c/httpd//src" -O0 -g3 -Wall -Werror -c -fmessage-length=0 -fPIC -MMD -MP -MF"wwwidget.d" -MT"wwwidget.d" -o "wwwidget.o" "../wwwidget.c"
+Finished building: ../wwwidget.c
+ 
+Building target: libhttpdWwwidget.so
+Invoking: GCC C Linker
+gcc -shared -o "libhttpdWwwidget.so"  ./wwwidget.o   /home/sancho/Desktop/versioned/git/c/kohaerenzstiftung//Debug/libkohaerenzstiftung.a
+Finished building target: libhttpdWwwidget.so
+ 

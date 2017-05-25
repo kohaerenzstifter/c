@@ -2,7 +2,7 @@
 # Automatically-generated file. Do not edit!
 ################################################################################
 
-USER_OBJS :=
+USER_OBJS := 
 
-LIBS := $(KOHAERENZSTIFTUNG_PATH)/Debug/libkohaerenzstiftung.a $(shell pkg-config --libs glib-2.0)
+LIBS := -lkohaerenzstiftung $(shell pkg-config --libs glib-2.0) -ldl -lmicrohttpd
 

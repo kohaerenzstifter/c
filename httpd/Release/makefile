@@ -14,7 +14,7 @@ RM := rm -rf
 
 # All of the sources participating in the build are defined here
 -include sources.mk
--include src/commands/subdir.mk
+-include src/plugins/subdir.mk
 -include src/subdir.mk
 -include subdir.mk
 -include objects.mk
@@ -30,22 +30,22 @@ endif
 # Add inputs and outputs from these tool invocations to the build variables 
 
 # All Target
-all: docs
+all: httpd
 
 dependents:
-	-cd $(KOHAERENZSTIFTUNG_PATH)/Debug && $(MAKE) clean all
+	-cd /home/sancho/git/c/kohaerenzstiftung/Debug && $(MAKE) clean all
 
 # Tool invocations
-docs: $(OBJS) $(USER_OBJS) $(OBJS)
+httpd: $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C Linker'
-	gcc -o "docs" $(OBJS) $(USER_OBJS) $(LIBS)
+	gcc -L"$(KOHAERENZSTIFTUNG_PATH)/Release" -rdynamic -o "httpd" $(OBJS) $(USER_OBJS) $(LIBS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
 # Other Targets
 clean:
-	-$(RM) $(OBJS)$(C_DEPS)$(EXECUTABLES) docs
+	-$(RM) $(OBJS)$(C_DEPS)$(EXECUTABLES) httpd
 	-@echo ' '
 
 .PHONY: all clean dependents

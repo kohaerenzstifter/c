@@ -10,7 +10,7 @@ OBJS := ../src/main.o ../src/output.o ../src/input.o \
 LIBS := -ldl `pkg-config --libs glib-2.0` `pkg-config --libs gtk+-3.0` \
   -lasound -pthread -lm
 
-CFLAGS = -O3 -g -Wall -Werror `pkg-config --cflags glib-2.0` \
+CFLAGS = -O0 -g3 -g -Wall -Werror `pkg-config --cflags glib-2.0` \
   `pkg-config --cflags gtk+-3.0` -I"$(KOHAERENZSTIFTUNG_PATH)" \
   -Wno-deprecated-declarations
 

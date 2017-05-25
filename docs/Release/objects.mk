@@ -4,5 +4,5 @@
 
 USER_OBJS :=
 
-LIBS := -lkohaerenzstiftung -lglib-2.0 -ltecla
+LIBS := -lkohaerenzstiftung $(shell pkg-config --libs glib-2.0) -ltecla
 

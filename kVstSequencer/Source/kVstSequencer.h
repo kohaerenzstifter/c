@@ -442,8 +442,7 @@ void setControllerStep(pattern_t *pattern,
 void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
   gboolean slide, uint32_t idx, lockContext_t *lockContext,
   gboolean live, err_t *e);
-#define freePattern(p) freePatternTODO((p), __LINE__)
-void freePatternTODO(pattern_t *pattern, int line);
+void freePattern(pattern_t *pattern);
 pattern_t *allocatePattern(pattern_t *parent);
 noteValue_t *allocateNoteValue(void);
 controllerValue_t *allocateControllerValue(void);
