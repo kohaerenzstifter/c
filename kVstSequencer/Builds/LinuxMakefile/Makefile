@@ -2,6 +2,19 @@
 # Don't edit this file! Your changes will be overwritten when you re-save the Projucer project!
 
 # build with "V=1" for verbose builds
+
+LDFLAGS+=`pkg-config --libs gtk+-3.0`                                  
+LDFLAGS+=`pkg-config --libs webkit2gtk-4.0`                          
+LDFLAGS+=`pkg-config --libs gobject-2.0`                  
+CFLAGS+=-I/usr/include/gtk-3.0               
+CFLAGS+=-I/usr/include/cairo                              
+CFLAGS+=-I/usr/include/pango-1.0                                    
+CFLAGS+=-I/usr/include/gdk-pixbuf-2.0                   
+CFLAGS+=-I/usr/include/atk-1.0         
+CFLAGS+=-I/usr/include/webkitgtk-4.0    
+CFLAGS+=-I/usr/include/libsoup-2.4                                                              
+CFLAGS+=-I/usr/include/webkitgtk-3.0
+
 ifneq ($(MAKECMDGOALS),clean)
 ifndef JUCE_PATH
 $(error Environment variable JUCE_PATH not set)
