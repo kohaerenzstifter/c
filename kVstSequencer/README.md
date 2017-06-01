@@ -78,7 +78,7 @@ In order to emulate the Accent feature, click on one of the three stacked "+" sy
 
 Next, click on the velocity expression (Vel) and let it control Filter Cutoff and Output Volume:
 
-![8](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/9.jpg)
+![9](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/9.jpg)
 
 
 
