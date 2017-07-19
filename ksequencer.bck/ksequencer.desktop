@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=KSequencer
+Comment=Very cool step sequencer.
+Exec=ksequencer
+Terminal=false

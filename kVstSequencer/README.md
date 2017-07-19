@@ -1,6 +1,6 @@
 # Description
 Remember those typical wobbling and sliding baselines you would create with the Roland TB 303 step sequencer? Remember how easy it was to create rhythms with TR 808/909? Nowadays, instead of using (expensive) real instruments, many people resort to VST synths for their sound creations. Alas, creating pattern just isn't so much fun with your DAW's composer as it used to be with the Roland step sequencers, don't you think?
-As a Linux user, I soon found myself searching for (Linux-compatible) step sequencer plugins to trigger my DAW's synths - with very scarce results. So I decided to write my own, which, as I found out, could be easily done with the help of the [JUCE](https://www.juce.com/ "JUCE") framework. If this made you curious, do read on on how to build and use kVstSequencer.
+As a Linux user, I soon found myself searching for (Linux-compatible) step sequencer plugins to trigger my DAW's synths - with very scarce results. So I decided to write my own, which, as I found out, could be easily done with the help of the [JUCE](https://www.juce.com/ "JUCE") framework. If this made you curious, do read on how to build and use kVstSequencer.
 
 # How to build
 ## Install required packages
@@ -48,7 +48,7 @@ First you have to tell Bitwig where it can find the step sequencer plugin, so on
 
 ![1](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/1.jpg)
 
-Next, select an instrument track of your choosing and within the Device Panal click on "+". In the device selection dialog that comes up, just enter "kVst" in the search bar at the top and then select "kVstSequencer" at the right:
+Next, select an instrument track of your choosing and within the Device Panel click on "+". In the device selection dialog that comes up, just enter "kVst" in the search bar at the top and then select "kVstSequencer" at the right:
 
 ![2](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/2.jpg)
 

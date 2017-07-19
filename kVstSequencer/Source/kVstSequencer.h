@@ -329,7 +329,9 @@ typedef struct pattern {
 	    source->velocity, (i), (l), FALSE, (e))) \
       terror(setSlide((p), target, (lst) ? FALSE : \
         source->slide, (i), (l), FALSE, (e))) \
+      target->slideLocked = source->slideLocked; \
     } \
+    LOCKED((t), TYPE((p))) = LOCKED((s), TYPE((p))); \
   } while (FALSE);
 
 
@@ -448,7 +450,7 @@ noteValue_t *allocateNoteValue(void);
 controllerValue_t *allocateControllerValue(void);
 void setSteps(pattern_t *pattern);
 void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
-  lockContext_t *lockContext, gboolean live, err_t *e);
+  lockContext_t *lockContext, gboolean live, int32_t shift, err_t *e);
 void deleteChild(pattern_t *parent, GSList *child,
   lockContext_t *lockContext, err_t *e);
 void freeValue(pattern_t *pattern, void *value);
@@ -462,13 +464,14 @@ void allNotesOff(lockContext_t *lockContext, gboolean alreadyLocked, err_t *e);
 void test(void);
 void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext);
 gboolean getLocked(gboolean *unlockable,
-  void *step, pattern_t *pattern, uint32_t idx);
+  void *step, pattern_t *pattern, uint32_t idx, gboolean onlyByParent);
 void guiSignalStep(int step);
 void guiSignalStop(void);
 midiMessage_t *getNoteOffMidiMessage(noteEvent_t *noteEvent);
 midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value);
 void fireMidiMessage(lockContext_t *lockContext,
   midiMessage_t *midiMessage, err_t *e);
+gboolean isAnyStepLockedByParent(pattern_t *pattern);
 
 #ifdef __cplusplus
 };

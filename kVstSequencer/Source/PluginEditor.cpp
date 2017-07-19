@@ -90,7 +90,7 @@ public:
 		MARK();
 
 		if (this->string != NULL) {
-			//delete string;
+			delete this->string;
 		}
 	}
 	void setText(const String &newText, NotificationType notification) {
@@ -102,9 +102,9 @@ public:
 		MARK();
 		
 		String *string = new String(text);
-		setText(*string, dontSendNotification);
+		setText(*string, sendNotificationSync);
 		if (this->string != NULL) {
-			delete string;
+			delete this->string;
 		}
 		this->string = string;
 	}
@@ -426,7 +426,7 @@ public:
 	virtual ~SimpleButton() override {
 		MARK();
 
-		if (listener != NULL) delete listener;
+		if (this->listener != NULL) delete this->listener;
 	}
 private:
 	SimpleButtonListener *listener;
@@ -447,8 +447,8 @@ public:
 	virtual ~SimpleToggleButton() override {
 		MARK();
 
-		if (listener != NULL) {
-			delete listener;
+		if (this->listener != NULL) {
+			delete this->listener;
 		}
 	}
 private:
@@ -468,10 +468,12 @@ static void cbIncrement(void *data);
 class SpinButton : public Container, Label::Listener
 {
 public:
+	gboolean enabled;
 	SimpleLabel *label;
 	int32_t value;
 	SpinButton(Component *component, int32_t min, int32_t max, int32_t value)
-	  : Container(component, FALSE), min(min), max(max), value(value) {
+	  : Container(component, FALSE), min(min), max(max), value(value),
+	  enabled(TRUE) {
 		MARK();
 
 		this->downButton = getSimpleButton(this, "-", cbDecrement, this);
@@ -485,6 +487,16 @@ public:
     virtual ~SpinButton() override {
 		MARK();
 	}
+	void setValue(int value, err_t *e) {
+		MARK();
+
+		terror(failIfFalse(((value >= this->min)&&(value <= this->max))))
+		this->value = value;
+		this->label->setText(intToString(value));
+
+finish:
+		return;
+	}
 	void setButtonsEnabled(void) {
 		MARK();
 
@@ -494,6 +506,7 @@ public:
 	virtual void setEnabled(gboolean enabled) {
 		MARK();
 
+		this->enabled = enabled;
 		this->label->setEnabled(enabled);
 		if (enabled) {
 			setButtonsEnabled();
@@ -501,6 +514,11 @@ public:
 			this->downButton->setEnabled(FALSE);
 			this->upButton->setEnabled(FALSE);
 		}
+	}
+	virtual void setEnabled(void) {
+		MARK();
+
+		this->setEnabled(this->enabled);
 	}
 
 	virtual void labelTextChanged(Label *label) {
@@ -550,6 +568,7 @@ public:
 			snprintf(buffer, sizeof(buffer), "%u", this->value);
 			((SimpleLabel *) label)->setText(buffer);
 		}
+		this->setEnabled(this->enabled);
 	}
 
 	virtual void editorShown(Label *label, TextEditor &textEditor) {
@@ -579,6 +598,8 @@ static struct {
 		struct {
 			SimpleToggleButton *noteRadios[ARRAY_SIZE(notes)];
 			SimpleToggleButton *sharpCheckButton;
+			SimpleToggleButton *lockToneCheckButton;
+			SimpleToggleButton *lockOctaveCheckButton;
 			SpinButton *octaveSpinButton;
 		} note;
 	};
@@ -603,7 +624,7 @@ static void refreshSpinButton(SpinButton *spinButton)
 	MARK();
 
 	spinButton->label->setText(intToString(spinButton->value));
-	spinButton->setButtonsEnabled();
+	spinButton->setEnabled();
 }
 
 static void cbDecrement(void *data)
@@ -688,7 +709,7 @@ static SimpleToggleButton *getSimpleToggleButton(Container *container,
 	SimpleToggleButton *result = new SimpleToggleButton(text, callback, data);
 
 	if (groupId >= 0) {
-		result->setRadioGroupId(groupId, dontSendNotification);
+		result->setRadioGroupId(groupId, sendNotificationSync);
 	}
 
 	container->addComponent(result);
@@ -774,7 +795,7 @@ static void cbDoAddPattern(void *data)
 	  createPattern.controllerSpinButton->value);
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, FALSE, e))
+	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, FALSE, 0, e))
 
 	terror(getLocks(&lockContext, locks, e))
 	locked = TRUE;
@@ -1023,6 +1044,57 @@ finish:
 	}
 }
 
+static void cbRandomNoteValue(void *data)
+{
+	MARK();
+
+	int32_t rnd = 0;
+	gboolean sharp = FALSE;
+
+	if (!setupValue.note.lockToneCheckButton->getToggleState()) {
+		rnd = rand() % ARRAY_SIZE(notes);
+
+		if (notes[rnd].sharpable) {
+			sharp = ((rand() % 2) == 0);
+		}
+
+		setupValue.note.noteRadios[rnd]->setToggleState(TRUE,
+		  sendNotificationSync);
+		setupValue.note.sharpCheckButton->setToggleState(sharp,
+		  sendNotificationSync);
+	}
+
+	if (!setupValue.note.lockOctaveCheckButton->getToggleState()) {
+		err_t err;
+		err_t *e = &err;
+
+		initErr(e);
+
+		rnd = (rand() % 11) - 5;
+
+		terror(setupValue.note.octaveSpinButton->setValue(rnd, e))
+
+finish:
+		return;
+	}
+}
+
+static void cbRandomControllerValue(void *data)
+{
+	MARK();
+
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	terror(setupValue.controllerOrVelocity.valueSpinButton->setValue((rand()
+	  % 128), e))
+
+finish:
+	return;
+}
+
 static Container *getSetupControllerValueDialog(Component *component,
   controllerValue_t *controllerValue)
 {
@@ -1036,6 +1108,7 @@ static Container *getSetupControllerValueDialog(Component *component,
 	  ((char *) controllerValue->name);
 	uint32_t curValue = (controllerValue == NULL) ? 0 : controllerValue->value;
 	Container *result = new Container(component, TRUE);
+	SimpleButton *randomButton = NULL;
 
 	box = getBoxWithLabel(component, result, TRUE, "name:");
 	nameEntry = getTextEditor(box);
@@ -1053,6 +1126,8 @@ static Container *getSetupControllerValueDialog(Component *component,
 		button =
 		  getSimpleButton(result, "Trigger", cbTriggerControllerValue, NULL);
 	}
+	randomButton =
+	  getSimpleButton(result, "Random", cbRandomControllerValue, NULL);
 	button =
 	  getSimpleButton(result, "OK", cbSetupControllerValue, controllerValue);
 
@@ -1083,8 +1158,11 @@ static Container *getSetupNoteValueDialog(Component *component,
 	uint8_t activeIdx = 0;
 	Container *box = NULL;
 	SimpleButton *button = NULL;
+	SimpleButton *randomButton = NULL;
 	TextEditor *nameEntry = NULL;
 	SimpleToggleButton *sharpCheckButton = NULL;
+	SimpleToggleButton *lockToneCheckButton = NULL;
+	SimpleToggleButton *lockOctaveCheckButton = NULL;
 	SpinButton *octaveSpinButton = NULL;
 	SimpleToggleButton *noteRadios[ARRAY_SIZE(notes)];
 	int8_t octave = (noteValue == NULL) ? 0 : noteValue->octave;
@@ -1105,17 +1183,31 @@ static Container *getSetupNoteValueDialog(Component *component,
 			activeIdx = i;
 		}
 	}
+
 	sharpCheckButton = getSimpleToggleButton(result, "sharp", -1, NULL, NULL);
 	sharpCheckButton->setToggleState(sharp, sendNotificationSync);
+
+	lockToneCheckButton =
+	  getSimpleToggleButton(result, "Don't Randomise", -1, NULL, NULL);
+	lockToneCheckButton->setToggleState(FALSE, sendNotificationSync);
+
 	box = getBoxWithLabel(component, result, TRUE, "octave:");
 	octaveSpinButton = getSpinButton(component, box, -128, 127, 0);
 	octaveSpinButton->label->setText(intToString(octave), sendNotificationSync);
+
+	lockOctaveCheckButton =
+	  getSimpleToggleButton(result, "Don't Randomise", -1, NULL, NULL);
+	lockOctaveCheckButton->setToggleState(FALSE, sendNotificationSync);
+
+	randomButton = getSimpleButton(result, "Random", cbRandomNoteValue, NULL);
 	button = getSimpleButton(result, "OK", cbSetupNoteValue, noteValue);
 
 	setupValue.nameEntry = nameEntry;
 	memcpy(setupValue.note.noteRadios, noteRadios, sizeof(noteRadios));
 	setupValue.note.sharpCheckButton = sharpCheckButton;
+	setupValue.note.lockToneCheckButton = lockToneCheckButton;
 	setupValue.note.octaveSpinButton = octaveSpinButton;
+	setupValue.note.lockOctaveCheckButton = lockOctaveCheckButton;
 
 	noteRadios[activeIdx]->setToggleState(TRUE, sendNotificationSync);
 
@@ -1207,6 +1299,8 @@ static SimpleButton *nextButton = NULL;
 static SimpleButton *valuesButton = NULL;
 static SimpleButton *velocitiesButton = NULL;
 static SimpleButton *randomiseButton = NULL;
+static SimpleButton *shiftLeftButton = NULL;
+static SimpleButton *shiftRightButton = NULL;
 
 static void enableButtons(void)
 {
@@ -1238,11 +1332,19 @@ static void enableButtons(void)
 	if (nrValues > 0) {
 		randomiseButton->setEnabled(TRUE);
 	}
-	if (IS_DUMMY(current.pattern)) {
+
+	valuesButton->setEnabled(!IS_DUMMY(current.pattern));
+	velocitiesButton->setEnabled(IS_NOTE(current.pattern));
+
+	if (NR_USERSTEPS(current.pattern) < 2) {
 		goto finish;
 	}
-	valuesButton->setEnabled(TRUE);
-	velocitiesButton->setEnabled(IS_NOTE(current.pattern));
+	if (isAnyStepLockedByParent(current.pattern)) {
+		goto finish;
+	}
+
+	shiftLeftButton->setEnabled(TRUE);
+	shiftRightButton->setEnabled(TRUE);
 
 finish:
 	return;
@@ -1253,6 +1355,23 @@ static Container *getBox(Component *component, gboolean vertical)
 	MARK();
 
 	return new Container(component, vertical);
+}
+
+static Container *getBoxWithLabel(Component *component, Container *container,
+  gboolean vertical, const char *labelText)
+{
+	MARK();
+
+	SimpleLabel *label = NULL;
+	Container *result = getBox(component, vertical);
+
+	if (labelText != NULL) {
+		label = getLabel(result, labelText);
+	}
+	
+	container->addContainer(result);
+
+	return result;
 }
 
 static char *intToString(int32_t number)
@@ -1369,7 +1488,7 @@ static void renderUserStep(Container *container, pattern_t *pattern,
 
 	addStepLabels(container, idx, shades, shadesSize);
 
-	locked = getLocked(&unlockable, step, pattern, idx);
+	locked = getLocked(&unlockable, step, pattern, idx, FALSE);
 	addLockButton(container, locked, unlockable, idx, FALSE);
 	button = getSimpleButton(container, text, cb, GUINT_TO_POINTER(idx));
 	if (IS_SET(step, TYPE(pattern)))  {
@@ -1595,6 +1714,9 @@ static void renderPattern(void)
 	valuesButton->setEnabled(FALSE);
 	velocitiesButton->setEnabled(FALSE);
 	randomiseButton->setEnabled(FALSE);
+	shiftLeftButton->setEnabled(FALSE);
+	shiftRightButton->setEnabled(FALSE);
+
 	if (stepsView !=  NULL) {
 		stepsBox->removeContainer(stepsView);
 		delete stepsView; stepsView = NULL;
@@ -1608,19 +1730,6 @@ static void renderPattern(void)
 finish:
 	signalling.generation++;
 	layout(application.component, application.container);
-}
-
-static Container *getBoxWithLabel(Component *component, Container *container,
-  gboolean vertical, const char *labelText)
-{
-	MARK();
-
-	Container *result = new Container(component, vertical);
-	SimpleLabel *label = getLabel(result, labelText);
-	
-	container->addContainer(result);
-
-	return result;
 }
 
 static SimpleButton *getSimpleButton(Container *container, const char *text,
@@ -1647,7 +1756,7 @@ static void cbSetBars(void *data)
 
 	terror(adjustSteps(pattern,
 	  numberPicker.label->getText(FALSE).getIntValue(),
-	  NR_STEPS_PER_BAR(pattern), &lockContext, TRUE, e))
+	  NR_STEPS_PER_BAR(pattern), &lockContext, TRUE, 0, e))
 
 	if (current.bar >= NR_BARS(pattern)) {
 		current.bar = NR_BARS(pattern) - 1;
@@ -1670,7 +1779,7 @@ static void cbSetStepsPerBar(void *data)
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
 	  numberPicker.label->getText(FALSE).getIntValue(),
-	  &lockContext, TRUE, e))
+	  &lockContext, TRUE, 0, e))
 
 finish:
 	destroyDialog();
@@ -2023,7 +2132,7 @@ static char *getPath(gboolean load, err_t *e)
 
 	char *result = NULL;
 	bool success = FALSE;
-	FileChooser fileChooser("Please select the moose you want to load...",
+	FileChooser fileChooser("Select path ...",
 	  File::getSpecialLocation (File::userHomeDirectory),
 	  FILE_PATTERN);
 
@@ -2352,7 +2461,7 @@ static void loadStorePattern(pattern_t **pattern, int fd, gboolean load,
 
 	if (load) {
 		terror(adjustSteps(p, NR_BARS(p),
-		  NR_USERSTEPS_PER_BAR(p), &lockContext, FALSE, e))
+		  NR_USERSTEPS_PER_BAR(p), &lockContext, FALSE, 0,e))
 	}
 
 	if (!IS_DUMMY(p)) {
@@ -2402,8 +2511,18 @@ static void cbLoad(void *data)
 	terror(loadStorePattern(&pattern, fd, TRUE, (pattern_t *) patterns.root, e))
 	terror(getLocks(&lockContext, locks, e))
 	locked = TRUE;
-	patterns.root->children =
-	  g_slist_append((GSList *) patterns.root->children, pattern);
+	if ((IS_DUMMY(pattern))&&(NR_USERSTEPS(pattern) == 1)&&
+	  IS_SET(USERSTEP_AT(pattern, 0), TYPE(pattern))) {
+		for (GSList *cur = ((GSList *) CHILDREN(pattern)); cur != NULL;
+		  cur = g_slist_next(cur)) {
+			pattern_t *child = (pattern_t *) cur->data;
+			patterns.root->children =
+			  g_slist_append((GSList *) patterns.root->children, child);
+		}
+	} else {
+		patterns.root->children =
+		  g_slist_append((GSList *) patterns.root->children, pattern);
+	}
 	pattern = NULL;
 	terror(releaseLocks(&lockContext, locks, e))
 	locked = FALSE;
@@ -2494,6 +2613,60 @@ static void cbChildren(void *data)
 	doChildren(current.pattern, NULL);
 }
 
+static void shiftPattern2(pattern_t *pattern, int32_t shiftBy, err_t *e)
+{
+	terror(adjustSteps(pattern, NR_BARS(pattern),
+	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, FALSE, shiftBy, e))
+	for (GSList *cur = (GSList *) CHILDREN(pattern); cur != NULL;
+	  cur = g_slist_next(cur)) {
+		pattern_t *child = (pattern_t *) cur->data;
+		terror(shiftPattern2(child, (shiftBy * (NR_USERSTEPS_PER_BAR(child)
+		  / NR_USERSTEPS_PER_BAR(pattern))), e))
+	}
+
+finish:
+	return;
+}
+
+static void shiftPattern(pattern_t *pattern, gboolean right, err_t *e)
+{
+	terror(shiftPattern2(pattern, right ? 1 : -1, e))
+	renderPattern();
+
+finish:
+	return;
+}
+
+static void cbShiftRight(void *data)
+{
+	MARK();
+
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	terror(shiftPattern(current.pattern, TRUE, e))
+
+finish:
+	return;
+}
+
+static void cbShiftLeft(void *data)
+{
+	MARK();
+
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	terror(shiftPattern(current.pattern, FALSE, e))
+
+finish:
+	return;
+}
+
 static void cbSiblings(void *data)
 {
 	MARK();
@@ -2581,6 +2754,18 @@ static Container *getCentreBox(void)
 	return result;
 }
 
+static Container *getLowestBox(void)
+{
+	MARK();
+
+	Container *result = getBox(application.component, FALSE);
+
+	shiftLeftButton = getSimpleButton(result, "<< SHIFT", cbShiftLeft, NULL);
+	shiftRightButton = getSimpleButton(result, "SHIFT >>", cbShiftRight, NULL);
+
+	return result;
+}
+
 static Container *getLowerBox(void)
 {
 	MARK();
@@ -2603,6 +2788,9 @@ static Container *getApplicationContainer(void)
 	//stepsView to be delete()d in renderPattern()
 	stepsView = NULL;
 	stepsBox = box = getLowerBox();
+	result->addContainer(box);
+
+	box = getLowestBox();
 	result->addContainer(box);
 
 	return result;

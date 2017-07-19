@@ -86,7 +86,6 @@ void getLocks(lockContext_t *lockContext, uint32_t locks, err_t *e)
 	}
 
 finish:
-if (hasFailed(e)) abort();
 	return;
 }
 
@@ -179,6 +178,7 @@ midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value)
 	MARK();
 
 	midiMessage_t *result = getMidiMessage(midiMessageTypeController);
+
 	result->controller.parameter = parameter;
 	result->controller.value = value;
 
@@ -476,7 +476,7 @@ void lockUserStep(pattern_t *pattern, uint32_t idx)
 
 	void *step = USERSTEP_AT(pattern, idx);
 
-	LOCKED(step, pattern->patternType) = !LOCKED(step, pattern->patternType);
+	LOCKED(step, TYPE(pattern)) = !LOCKED(step, TYPE(pattern));
 }
 
 void lockSlide(pattern_t *pattern, uint32_t idx)
@@ -713,7 +713,7 @@ void setSteps(pattern_t *pattern)
 }
 
 void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
-  lockContext_t *lockContext, gboolean live, err_t *e)
+  lockContext_t *lockContext, gboolean live, int32_t shift, err_t *e)
 {
 	MARK();
 
@@ -724,9 +724,11 @@ void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
 	void *eventSteps = NULL;
 	uint32_t haveBars = NR_BARS(pattern);
 	uint32_t haveStepsPerBar = NR_STEPS_PER_BAR(pattern);
-	uint32_t lastStepIdx = (bars * stepsPerBar) - 1;
+	uint32_t nrSteps = (bars * stepsPerBar);
+	uint32_t lastStepIdx = nrSteps - 1;
 	uint32_t stepDivisor = (stepsPerBar <= haveStepsPerBar) ?
 	  1 : (stepsPerBar / haveStepsPerBar);
+	int32_t shiftAdd = (stepDivisor * shift);
 	uint32_t stepMultiplier = (stepsPerBar >= haveStepsPerBar) ?
 	  1 : (haveStepsPerBar / stepsPerBar);
 	uint32_t locks = (!live) ? 0 : (IS_NOTE(pattern) && (userSteps != NULL)) ?
@@ -754,8 +756,16 @@ void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
 		for (uint32_t j = 0; j < stepsPerBar; j++) {
 			uint32_t sourceBarIdx = i % haveBars;
 			uint32_t sourceStepIdx = j / stepDivisor;
-			uint32_t targetStepIdx = (i * stepsPerBar) + j;
-			gboolean last = (targetStepIdx == lastStepIdx);
+			int32_t targetStepIdx =
+			  (i * stepsPerBar) + j + shiftAdd;
+			gboolean last;
+
+			if (targetStepIdx < 0) {
+				targetStepIdx = nrSteps + targetStepIdx;
+			} else if (targetStepIdx > lastStepIdx) {
+				targetStepIdx = (targetStepIdx - nrSteps);
+			}
+			last = (targetStepIdx == lastStepIdx);
 
 			sourceStepIdx *= stepMultiplier;
 			sourceStepIdx += (sourceBarIdx * haveStepsPerBar);
@@ -874,7 +884,7 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 		uint32_t nrValues = NR_VALUES(pattern);
 		void *step = USERSTEP_AT(pattern, i);
 
-		if (!getLocked(NULL, USERSTEP_AT(pattern, i), pattern, i)) {
+		if (!getLocked(NULL, USERSTEP_AT(pattern, i), pattern, i, FALSE)) {
 			if (IS_DUMMY(pattern)) {
 				if ((rand() % 2) == 0) {
 					continue;
@@ -922,7 +932,7 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 }
 
 gboolean getLocked(gboolean *unlockable,
-  void *step, pattern_t *pattern, uint32_t idx)
+  void *step, pattern_t *pattern, uint32_t idx, gboolean onlyByParent)
 {
 	MARK();
 
@@ -936,14 +946,34 @@ gboolean getLocked(gboolean *unlockable,
 	if ((!IS_SET(step, TYPE(pattern)))&&(!(IS_ROOT(pattern)))) {
 		result = !IS_SET(PARENTSTEP(pattern, idx), TYPE(PARENT(pattern)));
 	}
-	if ((!result)&&(IS_SET(step, TYPE(pattern))&&(nrValues < 2))) {
-		result = anyChildStepSet(pattern, idx);
+	if (!onlyByParent) {
+		if ((!result)&&(IS_SET(step, TYPE(pattern))&&(nrValues < 2))) {
+			result = anyChildStepSet(pattern, idx);
+		}
 	}
 	if (unlockable != NULL) {
 		*unlockable = !result;
 	}
-	if (!result) {
-		result = LOCKED(step, TYPE(pattern));
+	if (!onlyByParent) {
+		if (!result) {
+			result = LOCKED(step, TYPE(pattern));
+		}
+	}
+
+	return result;
+}
+
+gboolean isAnyStepLockedByParent(pattern_t *pattern)
+{
+	MARK();
+
+	gboolean result = FALSE;
+
+	for (uint32_t i = 0; i < NR_USERSTEPS(pattern); i++) {
+		if (getLocked(NULL, USERSTEP_AT(pattern, i), pattern, i, TRUE)) {
+			result = TRUE;
+			break;
+		}
 	}
 
 	return result;
