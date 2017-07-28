@@ -468,18 +468,25 @@ static void cbIncrement(void *data);
 class SpinButton : public Container, Label::Listener
 {
 public:
+	int32_t (*more)(int32_t value);
+	int32_t (*less)(int32_t value);
 	gboolean enabled;
 	SimpleLabel *label;
 	int32_t value;
-	SpinButton(Component *component, int32_t min, int32_t max, int32_t value)
+
+	SpinButton(Component *component, int32_t min, int32_t max, int32_t value,
+	  int32_t (*more)(int32_t value) = NULL, int32_t (*less)(int32_t value) = NULL,
+	  gboolean editable = TRUE)
 	  : Container(component, FALSE), min(min), max(max), value(value),
-	  enabled(TRUE) {
+	  enabled(TRUE), more(more), less(less) {
 		MARK();
 
 		this->downButton = getSimpleButton(this, "-", cbDecrement, this);
 		this->label = getLabel(this, intToString(this->value));
 		this->label->addListener(this);
-		this->label->setEditable(TRUE, FALSE, TRUE); 
+		if (editable) {
+			this->label->setEditable(TRUE, FALSE, TRUE); 
+		}
 		this->upButton = getSimpleButton(this, "+", cbIncrement, this);
 
 		setButtonsEnabled();
@@ -487,12 +494,16 @@ public:
     virtual ~SpinButton() override {
 		MARK();
 	}
-	void setValue(int value, err_t *e) {
+	void setValue(int32_t value, err_t *e) {
 		MARK();
 
+		defineError()
+
 		terror(failIfFalse(((value >= this->min)&&(value <= this->max))))
+
 		this->value = value;
 		this->label->setText(intToString(value));
+		this->setButtonsEnabled();
 
 finish:
 		return;
@@ -560,7 +571,6 @@ finish:
 		}
 
 
-		free(copy);
 		if (valid) {
 			this->value = (string[0] == '-') ? -number : number;
 		} else {
@@ -569,6 +579,7 @@ finish:
 			((SimpleLabel *) label)->setText(buffer);
 		}
 		this->setEnabled(this->enabled);
+		free(copy);
 	}
 
 	virtual void editorShown(Label *label, TextEditor &textEditor) {
@@ -599,8 +610,9 @@ static struct {
 			SimpleToggleButton *noteRadios[ARRAY_SIZE(notes)];
 			SimpleToggleButton *sharpCheckButton;
 			SimpleToggleButton *lockToneCheckButton;
-			SimpleToggleButton *lockOctaveCheckButton;
 			SpinButton *octaveSpinButton;
+			SpinButton *octaveRandRangeSpinButton;
+			SimpleLabel *randomDescriptionLabel;
 		} note;
 	};
 } setupValue;
@@ -619,22 +631,20 @@ static struct {
 	.nextPattern = 0
 };
 
-static void refreshSpinButton(SpinButton *spinButton)
-{
-	MARK();
-
-	spinButton->label->setText(intToString(spinButton->value));
-	spinButton->setEnabled();
-}
-
 static void cbDecrement(void *data)
 {
 	MARK();
 
 	SpinButton *spinButton = (SpinButton *) data;
+	int32_t value = spinButton->value;
 
-	spinButton->value--;
-	refreshSpinButton(spinButton);
+	if (spinButton->more == NULL) {
+		value--;
+	} else {
+		value = spinButton->less(value);
+	}
+
+	spinButton->setValue(value, NULL);
 }
 
 static void cbIncrement(void *data)
@@ -642,9 +652,15 @@ static void cbIncrement(void *data)
 	MARK();
 
 	SpinButton *spinButton = (SpinButton *) data;
+	int32_t value = spinButton->value;
 
-	spinButton->value++;
-	refreshSpinButton(spinButton);
+	if (spinButton->more == NULL) {
+		value++;
+	} else {
+		value = spinButton->more(value);
+	}
+
+	spinButton->setValue(value, NULL);
 }
 
 static struct {
@@ -732,11 +748,13 @@ static TextEditor *getTextEditor(Container *container)
 }
 
 static SpinButton *getSpinButton(Component *component, Container *container,
-  int32_t min, int32_t max, int value)
+  int32_t min, int32_t max, int value, int32_t (*more)(int32_t value) = NULL,
+  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE)
 {
 	MARK();
 
-	SpinButton *result = new SpinButton(component, min, max, value);
+	SpinButton *result =
+	  new SpinButton(component, min, max, value, more, less, editable);
 
 	container->addContainer(result);
 
@@ -1044,39 +1062,92 @@ finish:
 	}
 }
 
+static void getLowestAndHighest(int32_t base, uint32_t range,
+  int32_t *lowest, int32_t *highest)
+{
+	MARK();
+
+	uint32_t half = (range / 2);
+	int32_t lwst = -1;
+	int32_t hghst = -1;
+
+	if (lowest == NULL) {
+		lowest = &lwst;
+	}
+	if (highest == NULL) {
+		highest = &hghst;
+	}
+
+	(*lowest) = (base - half);
+	(*highest) = (base + half);
+
+	if ((*lowest) < -128) {
+		(*highest) += (-128 - (*lowest));
+		(*lowest) = -128;
+	} else if ((*highest) > 127) {
+		(*lowest) += ((*highest) - 127);
+		(*highest) = 127;
+	}
+}
+
+static void updateRandomDescriptionLabel(int32_t base, uint32_t range)
+{
+	MARK();
+
+	char buffer[100];
+	int32_t lowest = -1;
+	int32_t highest = -1;
+
+	getLowestAndHighest(base, range, &lowest, &highest);
+
+	if (range > 1) {
+		snprintf(buffer, sizeof(buffer),
+		  "Random Octave between %d and %d", lowest, highest);
+	} else {
+		snprintf(buffer, sizeof(buffer), "No Octave Randomisation");
+	}
+
+	setupValue.note.randomDescriptionLabel->setText(buffer);
+}
+
 static void cbRandomNoteValue(void *data)
 {
 	MARK();
 
+	int32_t lowest = -1;
 	int32_t rnd = 0;
 	gboolean sharp = FALSE;
+	err_t err;
+	err_t *e = &err;
 
-	if (!setupValue.note.lockToneCheckButton->getToggleState()) {
-		rnd = rand() % ARRAY_SIZE(notes);
+	initErr(e);
 
-		if (notes[rnd].sharpable) {
-			sharp = ((rand() % 2) == 0);
-		}
+	getLowestAndHighest(setupValue.note.octaveSpinButton->value,
+	  setupValue.note.octaveRandRangeSpinButton->value, &lowest, NULL);
 
-		setupValue.note.noteRadios[rnd]->setToggleState(TRUE,
-		  sendNotificationSync);
-		setupValue.note.sharpCheckButton->setToggleState(sharp,
-		  sendNotificationSync);
+	rnd = lowest + (rand() % setupValue.note.octaveRandRangeSpinButton->value);
+
+	terror(setupValue.note.octaveSpinButton->setValue(rnd, e))
+	updateRandomDescriptionLabel(rnd,
+	  setupValue.note.octaveRandRangeSpinButton->value);
+
+	if (setupValue.note.lockToneCheckButton->getToggleState()) {
+		goto finish;
 	}
 
-	if (!setupValue.note.lockOctaveCheckButton->getToggleState()) {
-		err_t err;
-		err_t *e = &err;
+	rnd = rand() % ARRAY_SIZE(notes);
 
-		initErr(e);
+	if (notes[rnd].sharpable) {
+		sharp = ((rand() % 2) == 0);
+	}
 
-		rnd = (rand() % 11) - 5;
-
-		terror(setupValue.note.octaveSpinButton->setValue(rnd, e))
+	setupValue.note.noteRadios[rnd]->setToggleState(TRUE,
+	  sendNotificationSync);
+	setupValue.note.sharpCheckButton->setToggleState(sharp,
+	  sendNotificationSync);
 
 finish:
-		return;
-	}
+	return;
 }
 
 static void cbRandomControllerValue(void *data)
@@ -1118,9 +1189,7 @@ static Container *getSetupControllerValueDialog(Component *component,
 	  (IS_NOTE(current.pattern)) ?
 	  "velocity value:" : "controller value");
 
-	valueSpinButton = getSpinButton(component, box, 0, 127, 0);
-	valueSpinButton->label->setText(intToString(curValue),
-	  sendNotificationSync);
+	valueSpinButton = getSpinButton(component, box, 0, 127, curValue);
 
 	if (!IS_NOTE(current.pattern)) {
 		button =
@@ -1150,6 +1219,54 @@ static char *charToString(char c)
 	return string;
 }
 
+static int32_t cbIncrementOctave(int32_t value)
+{
+	MARK();
+
+	int32_t result = (value + 1);
+
+	updateRandomDescriptionLabel(result,
+	  setupValue.note.octaveRandRangeSpinButton->value);
+
+	return result;
+}
+
+static int32_t cbDecrementOctave(int32_t value)
+{
+	MARK();
+
+	int32_t result = (value - 1);
+
+	updateRandomDescriptionLabel(result,
+	  setupValue.note.octaveRandRangeSpinButton->value);
+
+	return result;
+}
+
+static int32_t cbIncrementByTwo(int32_t value)
+{
+	MARK();
+
+	int32_t result = (value + 2);
+
+	updateRandomDescriptionLabel(setupValue.note.octaveSpinButton->value,
+	  result);
+
+	return result;
+}
+
+static int32_t cbDecrementByTwo(int32_t value)
+{
+	MARK();
+
+	int32_t result = (value - 2);
+
+	updateRandomDescriptionLabel(setupValue.note.octaveSpinButton->value,
+	  result);
+
+	return result;
+}
+
 static Container *getSetupNoteValueDialog(Component *component,
   noteValue_t *noteValue)
 {
@@ -1162,8 +1279,9 @@ static Container *getSetupNoteValueDialog(Component *component,
 	TextEditor *nameEntry = NULL;
 	SimpleToggleButton *sharpCheckButton = NULL;
 	SimpleToggleButton *lockToneCheckButton = NULL;
-	SimpleToggleButton *lockOctaveCheckButton = NULL;
+	SpinButton *octaveRandRangeSpinButton = NULL;
 	SpinButton *octaveSpinButton = NULL;
+	SimpleLabel *randomDescriptionLabel = NULL;
 	SimpleToggleButton *noteRadios[ARRAY_SIZE(notes)];
 	int8_t octave = (noteValue == NULL) ? 0 : noteValue->octave;
 	gboolean sharp = (noteValue == NULL) ? FALSE : noteValue->sharp;
@@ -1192,12 +1310,14 @@ static Container *getSetupNoteValueDialog(Component *component,
 	lockToneCheckButton->setToggleState(FALSE, sendNotificationSync);
 
 	box = getBoxWithLabel(component, result, TRUE, "octave:");
-	octaveSpinButton = getSpinButton(component, box, -128, 127, 0);
-	octaveSpinButton->label->setText(intToString(octave), sendNotificationSync);
+	octaveSpinButton = getSpinButton(component, box, -128, 127, octave,
+	  cbIncrementOctave, cbDecrementOctave, FALSE);
 
-	lockOctaveCheckButton =
-	  getSimpleToggleButton(result, "Don't Randomise", -1, NULL, NULL);
-	lockOctaveCheckButton->setToggleState(FALSE, sendNotificationSync);
+	box = getBoxWithLabel(component, result, TRUE, "Octave Random Range");
+	octaveRandRangeSpinButton = getSpinButton(component, box, 1, 255, 3,
+	  cbIncrementByTwo, cbDecrementByTwo, FALSE);
+
+	randomDescriptionLabel = getLabel(box, NULL);
 
 	randomButton = getSimpleButton(result, "Random", cbRandomNoteValue, NULL);
 	button = getSimpleButton(result, "OK", cbSetupNoteValue, noteValue);
@@ -1207,7 +1327,11 @@ static Container *getSetupNoteValueDialog(Component *component,
 	setupValue.note.sharpCheckButton = sharpCheckButton;
 	setupValue.note.lockToneCheckButton = lockToneCheckButton;
 	setupValue.note.octaveSpinButton = octaveSpinButton;
-	setupValue.note.lockOctaveCheckButton = lockOctaveCheckButton;
+	setupValue.note.octaveRandRangeSpinButton = octaveRandRangeSpinButton;
+	setupValue.note.randomDescriptionLabel = randomDescriptionLabel;
+
+	updateRandomDescriptionLabel(octaveSpinButton->value,
+	  octaveRandRangeSpinButton->value);
 
 	noteRadios[activeIdx]->setToggleState(TRUE, sendNotificationSync);
 

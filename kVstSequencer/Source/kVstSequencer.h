@@ -9,7 +9,7 @@
   do { \
     FILE *file = getOutFile(); \
     if (file != NULL) { \
-      fprintf(file, "%s (%s:%d)\n", __FUNCTION__, __FILE__, __LINE__); \
+      fprintf(file, "%s (%s:%d)\n",  __FUNCTION__, __FILE__, __LINE__); \
       fflush(file); \
     } \
   } while (FALSE);
@@ -28,7 +28,6 @@ extern "C" {
 
 #define EVENTSTEPS_PER_BAR MAX_EVENTSTEPS_PER_BAR
 #define MICROTICKS_PER_BAR EVENTSTEPS_PER_BAR
-
 
 typedef struct {
     pthread_mutex_t value;

@@ -187,6 +187,9 @@ static void process(
 	atMicrotick =
 	  (((double) currentPositionInfo->ppqPosition) * MILLION)
 	  * (((double) MICROTICKS_PER_BAR) / millionTimesNumerator);
+	if (!isPlaying) {
+		nextEventStep = atMicrotick;
+	}
 	while (atMicrotick >= nextEventStep) {
 		performStep(((pattern_t *) patterns.root), nextEventStep,
 		  midiBuffer, &position);
@@ -261,13 +264,19 @@ KVstSequencerAudioProcessor::KVstSequencerAudioProcessor()
                        )
 #endif
 {
+	MARK();
+
 #if 0
-	setOutput("/tmp/kVstSequencer.out", "/tmp/kVstSequencer.err", NULL);
-	setOutput("/tmp/kVstSequencer.fifo",
-	  "/tmp/kVstSequencer.fifo", NULL);
+	char outbuffer[100];
+	char errbuffer[100];
+
+	snprintf(outbuffer, sizeof(outbuffer), "/tmp/kVstSequencer.%d.out", getpid());
+	mkfifo(outbuffer, 0666);
+	snprintf(errbuffer, sizeof(errbuffer), "/tmp/kVstSequencer.%d.err", getpid());
+	mkfifo(errbuffer, 0666);
+	setOutput(outbuffer, errbuffer, NULL);
 #endif
 
-	MARK();
 
 	err_t err;
 	err_t *e = &err;
@@ -399,7 +408,6 @@ int KVstSequencerAudioProcessor::getCurrentProgram()
 void KVstSequencerAudioProcessor::setCurrentProgram (int index)
 {
 	MARK();
-
 }
 
 const String KVstSequencerAudioProcessor::getProgramName (int index)
@@ -413,7 +421,6 @@ void KVstSequencerAudioProcessor::changeProgramName (int index,
   const String& newName)
 {
 	MARK();
-
 }
 
 //==============================================================================
