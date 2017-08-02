@@ -471,6 +471,7 @@ midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value);
 void fireMidiMessage(lockContext_t *lockContext,
   midiMessage_t *midiMessage, err_t *e);
 gboolean isAnyStepLockedByParent(pattern_t *pattern);
+void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e);
 
 #ifdef __cplusplus
 };

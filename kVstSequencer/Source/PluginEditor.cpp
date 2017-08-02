@@ -1412,6 +1412,7 @@ static Container *stepsBox = NULL;
 static Container *stepsView = NULL;
 static SimpleButton *parentButton = NULL;
 static SimpleButton *topButton = NULL;
+static SimpleButton *promoteButton = NULL;
 static SimpleButton *loadButton = NULL;
 static SimpleButton *storeButton = NULL;
 static SimpleButton *barsButton = NULL;
@@ -1442,6 +1443,7 @@ static void enableButtons(void)
 
 	parentButton->setEnabled(TRUE);
 	topButton->setEnabled(TRUE);
+	promoteButton->setEnabled(!(IS_ROOT(PARENT(current.pattern))));
 	barsButton->setEnabled(
 	  (g_slist_length(((GSList *) CHILDREN(current.pattern))) < 1));
 	stepsPerBarButton->setEnabled(
@@ -1830,6 +1832,7 @@ static void renderPattern(void)
 	childrenButton->setEnabled(TRUE);
 	parentButton->setEnabled(FALSE);
 	topButton->setEnabled(FALSE);
+	promoteButton->setEnabled(FALSE);
 	barsButton->setEnabled(FALSE);
 	stepsPerBarButton->setEnabled(FALSE);
 	siblingsButton->setEnabled(FALSE);
@@ -2248,6 +2251,23 @@ static void cbTop(void *data)
 	MARK();
 
 	enterPattern(((pattern_t  *) patterns.root));
+}
+
+static void cbPromote(void *data)
+{
+	MARK();
+
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	terror(promotePattern(current.pattern, &lockContext, e))
+
+	renderPattern();
+
+finish:
+	return;
 }
 
 static char *getPath(gboolean load, err_t *e)
@@ -2849,7 +2869,8 @@ static Container *getCentreBox(void)
 {
 	MARK();
 
-	Container * valuesBox = getBox(application.component, TRUE);
+	Container *valuesBox = getBox(application.component, TRUE);
+	Container *loadStoreBox = getBox(application.component, TRUE);
 	Container *result = getBox(application.component, TRUE);
 	Container *box = getBox(application.component, FALSE);
 
@@ -2857,8 +2878,11 @@ static Container *getCentreBox(void)
 
 	parentButton = getSimpleButton(box, "Parent!", cbParent, NULL);
 	topButton = getSimpleButton(box, "Top!", cbTop, NULL);
-	loadButton = getSimpleButton(box, "Load", cbLoad, NULL);
-	storeButton = getSimpleButton(box, "Store ...", cbStore, NULL);
+	promoteButton = getSimpleButton(box, "Promote", cbPromote, NULL);
+	
+	box->addContainer(loadStoreBox);
+	loadButton = getSimpleButton(loadStoreBox, "Load ...", cbLoad, NULL);
+	storeButton = getSimpleButton(loadStoreBox, "Store ...", cbStore, NULL);
 	barsButton = getSimpleButton(box, "Bars ...", cbBars, NULL);
 	stepsPerBarButton = getSimpleButton(box, "Steps per Bar ...",
 	  cbStepsPerBar, NULL);

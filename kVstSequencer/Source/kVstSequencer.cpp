@@ -813,6 +813,40 @@ finish:
 	}
 }
 
+void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e)
+{
+	MARK();
+
+	defineError();
+
+	uint32_t locks = (IS_NOTE(pattern)) ?
+	  (LOCK_DATA | LOCK_SEQUENCER) : LOCK_DATA;
+	gboolean locked = FALSE;
+	pattern_t *parent = NULL;
+	GSList *link = NULL;
+
+	terror(getLocks(lockContext, locks, e))
+	locked = TRUE;
+
+	if (locks & LOCK_SEQUENCER) {
+		terror(unsoundPattern(lockContext, pattern, e))
+	}
+
+	parent = PARENT(pattern);
+	terror(failIfFalse((parent != NULL)))
+	link = g_slist_find(((GSList *) CHILDREN(parent)), pattern);
+	terror(failIfFalse((link != NULL)))
+	CHILDREN(parent) = g_slist_delete_link(((GSList *) CHILDREN(parent)), link);
+	CHILDREN(patterns.root) =
+	  g_slist_append(((GSList *) CHILDREN(patterns.root)), pattern);
+	PARENT(pattern) = ((pattern_t *) patterns.root);
+
+finish:
+	if (locked) {
+		terror(releaseLocks(lockContext, locks, NULL))
+	}
+}
+
 typedef struct {
 	lockContext_t *lockContext;
 	err_t *e;
