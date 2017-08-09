@@ -302,7 +302,7 @@ typedef struct pattern {
   ((t) == patternTypeNote) ? &(((noteUserStep_t *) (s))->locked) : \
   &(((controllerUserStep_t *) (s))->locked))
 #define LOCKED(s, t) (*(LOCKED_PTR(s, t)))
-#define EVENTSTEPS_PER_USERSTEP(t) (((t) == patternTypeNote) ? 2 : \
+#define EVENTSTEPS_PER_USERSTEP(t) (((t) == patternTypeNote) ? 8 : \
   ((t) == patternTypeController) ? 1 : \
   SEGFAULT_NUMBER)
 #define MAX_BARS 512
