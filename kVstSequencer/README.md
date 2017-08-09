@@ -83,12 +83,74 @@ Next, click on the velocity expression (Vel) and let it control Filter Cutoff an
 
 
 --------------------------------------------------------------------------------------------------
+Note velocity will now influence the filter cutoff and volume of your synth. This is important, because by playing notes with different velocity, the step sequencer will emulate the TB 303's accent feature.
+By enabling legato, we enabled the slide feature, which the step sequencer emulates by playing two notes consecutively and releasing the first *just after* the second is pressed.
+
+We still need to hook up a so-called Note Receiver to make sure the notes played by our sequencer are received by our synth. Click on the + symbol right in front of the synth:
+
+![10](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/10.jpg)
+
+Next select a Note Receiver device:
+
+![11](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/11.jpg)
+
+Configure your Note Receiver's source to be the track in which the step sequencer is loaded:
+
+![12](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/12.jpg)
+
+Now change to the step sequencer's track and open the plugin GUI:
+
+![13](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/13.jpg)
+
 When you add kVstSequencer to your DAW's project, you find yourself at the root level. What do I mean by that? Well, a kVstSequencer pattern can be made up of several hierarchically dependent patterns. All that will make sense to you very soon. For now and for simplicity's sake, suffice it to say that you first need to add a child to the root pattern by clicking on "Children ...":
 
-image1
+![14](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/14.jpg)
 
 Now click on "Add" to set up a new child pattern:
 
-image2
+![15](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/15.jpg)
+
+As we are going to create a baseline pattern, we need to select "NOTE" for the pattern type. Let's call it "baseline" and assign MIDI channel 1:
+
+![16](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/16.jpg)
+
+Now enter your newly created pattern:
+
+![17](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/17.jpg)
+
+To demonstrate how a pattern's configuration can be changed even during playback, let's now start the playback in Bitwig:
+
+![18](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/18.jpg)
+
+Now let's create two note velocities, one for normal play and one for accentuated play, by clicking on velocities:
+
+![19](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/19.jpg)
+
+Now add two velocites by clicking on "Add". For normal play, let's assign a velocity value of 80, and for accentuated play, let it be 127:
+
+![20](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/20.jpg)
+
+Next, click on "Values" and create two randomly chosen notes eligible for playback:
+
+![21](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/21.jpg)
+
+Your pattern is currently one bar long with one step per bar. Clicking several times on that step lets you step through the various combinations of notes and velocities:
+
+![22](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/22.jpg)
+
+As you probably know, the TB 303 has 16 steps per bar, so let's change that by clicking on "Steps per Bar" and select 16. The step value assigned to your single step will now be copied to all 16 steps of your bar:
+
+![23](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/23.jpg)
+
+Of course, this sounds boring, so let's just create a random pattern by clicking on "Randomise":
+
+![24](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/24.jpg)
+
+
+
+
+
+
+
 
 Use the radio buttons to select the type of pattern you with to create (NOTE), give your pattern a name, and select the MIDI channel number. In some DAW's (e.g. Bitwig), the MIDI channel you select here plays no role at all, since the instruments to control is determined by how you plug your devices together.
