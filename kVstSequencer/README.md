@@ -146,3 +146,42 @@ As you probably know, the TB 303 has 16 steps per bar, so let's change that by c
 Of course, this sounds boring, so let's just create a random pattern by clicking on "Randomise":
 
 ![24](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/24.jpg)
+
+# Some theory
+All this was just a little teaser to help you get started. I'm sure your imagination reaches far enough to envision how to also set up a TR 808/909 style drum machine and stuff like this.
+Let's now delve a little bit into theory.
+In kVstSequencer, patterns are hierarchically organised, with the root pattern at the very top. The root pattern is where you stand before setting up any pattern on your own. That's why you have to click on "Children" when adding a new pattern: You're adding a child pattern to the root pattern.
+
+When setting up a new pattern, you can choose between three pattern types: Note, Controller and Dummy. Note patterns are there to play notes, Controller patterns control MIDI controllers and Dummy pattern don't seem to do anything, right? Well, not quite.
+The parent->child relationship mandates, that a step in a child pattern may only be set, if the corresponding step in the parent pattern is also set. But what's the corresponding parent pattern for a step?
+Let's first imagine a parent pattern with 1 bar and 4 steps per bar that has a child pattern, also with 1 bar and 4 steps per bar. This is easy: The corresponding step for step 1 in the child pattern is step 1 in the parent pattern, the corresponding step for step 2 in the child pattern is step 2 in the parent pattern, and so on.
+Now let's imagine a parent pattern with 1 bar and 4 steps per bar that has a child pattern with 2 bars and 4 steps per bar. The relationships are as follows: Step 1 in the parent pattern corresponds to step 1 in the child pattern, Step 2 in the parent pattern corresponds to step 2 in the child pattern, ..., step 1 in the parent pattern also corresponds to step 5 in the child pattern, step 2 in the parent pattern also corresponds to step 6 in the child pattern, ... you recognise a pattern here, right (no pun intended)?
+
+As a last example, imagine a parent pattern with 1 bar and 4 steps per bar that has a child pattern with 2 bars and 8 steps per bar. The relationships are as follows: Step 1 in the parent pattern corresponds to steps 1 and 2 in the child pattern, step 2 in the parent pattern corresponds to steps 3 and 4 in the child pattern, ..., step 1 in the parent pattern also corresponds to steps 9 and 10 in the child pattern, and so on and so forth. I think you got the point.
+
+Yes I know, you'll be asking yourself, what happens if your parent pattern has 16 steps per bar and your child pattern only 4, and stuff like this. The simple answer to all these kinds of questions is: The number of steps per bar in a child pattern is guaranteed to be a multiple of the number of steps per bar in the parent pattern. And the number of bars in a child pattern is also guaranteed to be a multiple of the number of bars in the parent pattern. Full stop.
+
+And by the way: The root pattern is simply a pattern of type dummy, 1 step per bar, 1 bar. And that one step is always set. Just think about it ;-)
+
+# Buttons
+Let's also give you a quick overview of the buttons:
+
+Parent: Changes to the parent pattern of the currently active pattern
+Top: Takes you to the root pattern
+Promote: Makes the root pattern "adopt" the current pattern from the current pattern, in order to disable any restrictions as to which steps may be set.
+Store: Stores the current pattern and all of its children in a file.
+Load: Loads patterns from a file and hooks them into the list of child patterns of the root pattern.
+Bars: Set number of bars for current pattern.
+Steps per Bar: set number of steps per bar for current pattern
+Children: add or delete the current pattern's children
+Siblings: add or delete the current pattern's siblings
+Previous/Next: Change to the next or previous bar
+Values: Add, delete or edit the possible values.
+Velocities: Add, delete or edit the possible velocities
+Randomise: Randomise a pattern.
+<< SHIFT: shift the current pattern one step to the left
+SHIFT >>: shift the current pattern one step to the right
+
+You'll also notice that each step has a LOCK button above it. Locking a step means you can't change its value. And that is also respected by "Randomise".
+In the case of note type patterns, each step also has a slide button, which should be self-explanatory. There's also a "LOCK SLIDE" button beneath the slide button that lets you lock only the slide status of a step.
+
