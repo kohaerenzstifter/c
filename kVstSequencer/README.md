@@ -145,12 +145,3 @@ As you probably know, the TB 303 has 16 steps per bar, so let's change that by c
 Of course, this sounds boring, so let's just create a random pattern by clicking on "Randomise":
 
 ![24](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/24.jpg)
-
-
-
-
-
-
-
-
-Use the radio buttons to select the type of pattern you with to create (NOTE), give your pattern a name, and select the MIDI channel number. In some DAW's (e.g. Bitwig), the MIDI channel you select here plays no role at all, since the instruments to control is determined by how you plug your devices together.
