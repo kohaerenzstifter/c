@@ -1,3 +1,5 @@
+/* Copyright 2017 Martin Knappe (martin.knappe at gmail dot com) */
+
 /*
  ============================================================================
  Name        : kohaerenzstiftung.c

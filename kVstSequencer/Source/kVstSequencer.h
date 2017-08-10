@@ -1,3 +1,5 @@
+/* Copyright 2017 Martin Knappe (martin.knappe at gmail dot com) */
+
 #ifndef _KVSTSEQUENCER_H
 #define _KVSTSEQUENCER_H
 

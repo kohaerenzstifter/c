@@ -1,3 +1,5 @@
+/* Copyright 2017 Martin Knappe (martin.knappe at gmail dot com) */
+
 MAIN_BUTTON(Parent)
 MAIN_BUTTON(Top)
 MAIN_BUTTON(Load)
