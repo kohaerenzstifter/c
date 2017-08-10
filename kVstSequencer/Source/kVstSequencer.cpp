@@ -919,18 +919,22 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 		void *step = USERSTEP_AT(pattern, i);
 
 		if (!getLocked(NULL, USERSTEP_AT(pattern, i), pattern, i, FALSE)) {
+			gboolean setStep = FALSE;
+			if (anyChildStepSet(pattern, i)) {
+				setStep = TRUE;
+			} else {
+				setStep = ((rand() % 2) == 0);
+			}
 			if (IS_DUMMY(pattern)) {
-				if ((rand() % 2) == 0) {
-					continue;
-				}
-				setDummyStep(pattern, (dummyUserStep_t *) step,
-				  !IS_SET((dummyUserStep_t *) step, TYPE(pattern)), lockContext, NULL);
+				setDummyStep(pattern, ((dummyUserStep_t *) step),
+				  setStep, lockContext, NULL);
 				continue;
 			}
-			if (!anyChildStepSet(pattern, i)) {
-				nrValues++;
+
+			uint32_t idx = nrValues;
+			if (setStep) {
+				idx = (rand() % nrValues);
 			}
-			uint32_t idx = (rand() % nrValues);
 			value = g_slist_nth(VALUES(pattern), idx);
 			if (IS_CONTROLLER(pattern)) {
 				setControllerStep(pattern,
@@ -945,7 +949,7 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 		} else if (!IS_NOTE(pattern)) {
 			continue;
 		}
-		
+
 		if (VALUE(step, TYPE(pattern)) == NULL) {
 			continue;
 		}
