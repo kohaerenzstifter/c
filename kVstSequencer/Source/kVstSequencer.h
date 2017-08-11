@@ -463,7 +463,8 @@ void *output(void *param);
 void *input(void *param);
 void allNotesOff(lockContext_t *lockContext, gboolean alreadyLocked, err_t *e);
 void test(void);
-void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext);
+void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
+  lockContext_t *lockContext);
 gboolean getLocked(gboolean *unlockable,
   void *step, pattern_t *pattern, uint32_t idx, gboolean onlyByParent);
 void guiSignalStep(int step);

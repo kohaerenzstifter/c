@@ -901,7 +901,8 @@ finish:
 	}
 }
 
-void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
+void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
+  lockContext_t *lockContext)
 {
 	MARK();
 
@@ -923,7 +924,7 @@ void randomise(pattern_t *pattern, uint32_t bar, lockContext_t *lockContext)
 			if (anyChildStepSet(pattern, i)) {
 				setStep = TRUE;
 			} else {
-				setStep = ((rand() % 2) == 0);
+				setStep = ((rand() % 100) < probability);
 			}
 			if (IS_DUMMY(pattern)) {
 				setDummyStep(pattern, ((dummyUserStep_t *) step),

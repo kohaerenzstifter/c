@@ -475,8 +475,8 @@ public:
 	int32_t value;
 
 	SpinButton(Component *component, int32_t min, int32_t max, int32_t value,
-	  int32_t (*more)(int32_t value) = NULL, int32_t (*less)(int32_t value) = NULL,
-	  gboolean editable = TRUE)
+	  int32_t (*more)(int32_t value) = NULL,
+	  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE)
 	  : Container(component, FALSE), min(min), max(max), value(value),
 	  enabled(TRUE), more(more), less(less) {
 		MARK();
@@ -1424,6 +1424,7 @@ static SimpleButton *nextButton = NULL;
 static SimpleButton *valuesButton = NULL;
 static SimpleButton *velocitiesButton = NULL;
 static SimpleButton *randomiseButton = NULL;
+static SpinButton *randomiseSpinButton = NULL;
 static SimpleButton *shiftLeftButton = NULL;
 static SimpleButton *shiftRightButton = NULL;
 
@@ -2856,7 +2857,8 @@ static void cbRandomise(void *data)
 		goto finish;
 	}
 	randomising = TRUE;
-	randomise(current.pattern, current.bar, &lockContext);
+	randomise(current.pattern, current.bar,
+	  randomiseSpinButton->value, &lockContext);
 
 	renderPattern();
 	randomising = FALSE;
@@ -2870,6 +2872,7 @@ static Container *getCentreBox(void)
 	MARK();
 
 	Container *valuesBox = getBox(application.component, TRUE);
+	Container *randomisationBox = getBox(application.component, TRUE);
 	Container *loadStoreBox = getBox(application.component, TRUE);
 	Container *result = getBox(application.component, TRUE);
 	Container *box = getBox(application.component, FALSE);
@@ -2897,7 +2900,11 @@ static Container *getCentreBox(void)
 	valuesButton = getSimpleButton(valuesBox, "Values ...", cbValues, NULL);
 	velocitiesButton =
 	  getSimpleButton(valuesBox, "Velocities ...", cbVelocities, NULL);
-	randomiseButton = getSimpleButton(box, "Randomise!", cbRandomise, NULL);
+	box->addContainer(randomisationBox);
+	randomiseSpinButton = getSpinButton(application.component, randomisationBox,
+	  0, 100, 50);
+	randomiseButton = getSimpleButton(randomisationBox,
+	  "Randomise!", cbRandomise, NULL);
 
 	return result;
 }
