@@ -2275,6 +2275,7 @@ static char *getPath(gboolean load, err_t *e)
 {
 	MARK();
 
+	const char *string = NULL;
 	char *result = NULL;
 	bool success = FALSE;
 	FileChooser fileChooser("Select path ...",
@@ -2288,354 +2289,16 @@ static char *getPath(gboolean load, err_t *e)
 	}
 	terror(failIfFalse(success))
 
-	result = strdup(fileChooser.getResult().getFullPathName().toRawUTF8());
+	string = fileChooser.getResult().getFullPathName().toRawUTF8();
+	if (g_str_has_suffix(string, EXTENSION)) {
+		result = strdup(string);
+	} else {
+		result = g_strconcat(string, EXTENSION, NULL);
+	}
 
 finish:
 	return result;
 }
-
-typedef ssize_t (*readWriteFunc_t)(int fd, void *buf, size_t count);
-
-static void readWriteFd(void *data, uint32_t length, int fd,
-  gboolean reading, err_t *e)
-{
-	MARK();
-
-	char *cur = (char *) data;
-	uint32_t pending = length;
-	readWriteFunc_t func = reading ? ((readWriteFunc_t) read) :
-	  ((readWriteFunc_t) write);
-
-	while (pending > 0) {
-		ssize_t just = func(fd, cur, pending);
-		if (just < 1) {
-			terror(failIfFalse((just < 0)&&((errno ==
-			  EINTR)/*||(errno == EAGAIN)*/)))
-			continue;
-		}
-		pending -= just;
-		cur += just;
-	}
-finish:
-	return;
-}
-
-static void loadStorePattern(pattern_t **pattern, int fd, gboolean load,
-  pattern_t *parent, err_t *e);
-
-static void loadStoreChildren(pattern_t *parent, int fd,
-  gboolean load, err_t *e)
-{
-	MARK();
-
-	uint32_t count = 0;
-
-	if (!load) {
-		count = g_slist_length((GSList *) parent->children);
-	}
-
-	terror(readWriteFd(&count, sizeof(count), fd, load, e))
-
-	for (uint32_t i = 0; i < count; i++) {
-		pattern_t *child = NULL;
-		if (!load) {
-			child =
-			  (pattern_t *) g_slist_nth_data((GSList *) parent->children, i);
-		}
-		terror(loadStorePattern(&child, fd, load, parent, e))
-		if (load) {
-			parent->children =
-			  g_slist_append((GSList *) parent->children, child);
-		}
-	}
-
-finish:
-	return;
-}
-
-static char *readStringFromFd(int fd, err_t *e)
-{
-	MARK();
-
-	size_t length = 0;
-	char *result = NULL;
-	char *_result = NULL;
-
-	terror(readWriteFd(&length, sizeof(length), fd, TRUE, e))
-	_result = (char *) calloc(1, (length + 1));
-	terror(readWriteFd(_result, length, fd, TRUE, e))
-	_result[length] = '\0';
-
-	result = _result; _result = NULL;
-finish:
-	return result;
-}
-
-static void writeStringToFd(char *string, int fd, err_t *e)
-{
-	MARK();
-
-	size_t length = strlen(string);
-
-	terror(readWriteFd(&length, sizeof(length), fd, FALSE, e))
-	terror(readWriteFd(string, length, fd, FALSE, e))
-
-finish:
-	return;
-}
-
-static void loadStoreNoteValue(noteValue_t **noteValue, int fd,
-  gboolean load, err_t *e)
-{
-	MARK();
-
-	noteValue_t *freeMe = NULL;
-
-	if (load) {
-		freeMe = (*noteValue) = allocateNoteValue();
-		terror((*noteValue)->name = readStringFromFd(fd, e))
-	} else {
-		terror(writeStringToFd((char *) (*noteValue)->name, fd, e))
-	}
-
-	terror(readWriteFd((void *) &((*noteValue)->note),
-	  sizeof((*noteValue)->note), fd, load, e))
-	terror(readWriteFd((void *) &((*noteValue)->sharp),
-	  sizeof((*noteValue)->sharp), fd, load, e))
-	terror(readWriteFd((void *) &((*noteValue)->octave),
-	  sizeof((*noteValue)->octave), fd, load, e))
-
-	freeMe = NULL;
-finish:
-	if (freeMe != NULL) {
-		freeNoteValue(freeMe);
-	}
-}
-
-static void loadStoreControllerValue(controllerValue_t **controllerValue,
-  int fd, gboolean load, err_t *e)
-{
-	MARK();
-
-	controllerValue_t *freeMe = NULL;
-
-	if (load) {
-		freeMe = (*controllerValue) = allocateControllerValue();
-		terror((*controllerValue)->name = readStringFromFd(fd, e))
-	} else {
-		terror(writeStringToFd((char *) (*controllerValue)->name, fd, e))
-	}
-
-	terror(readWriteFd((void *) &((*controllerValue)->value),
-	  sizeof((*controllerValue)->value), fd, load, e))
-
-	freeMe = NULL;
-finish:
-	if (freeMe != NULL)  {
-		freeControllerValue(freeMe);
-	}
-}
-
-static void loadStoreValue(void **value, pattern_t *pattern, int fd,
-  gboolean load, gboolean velocities, err_t *e)
-{
-	MARK();
-
-	if (velocities || IS_CONTROLLER(pattern)) {
-		terror(loadStoreControllerValue(((controllerValue_t **) value),
-		  fd, load, e))
-	} else {
-		terror(loadStoreNoteValue(((noteValue_t **) value), fd, load, e))
-	}
-
-finish:
-	return;
-}
-
-static void loadStoreValuesVelocities(pattern_t *pattern, int fd,
-  gboolean load, gboolean velocities, err_t *e)
-{
-	MARK();
-
-	guint length = 0;
-	uint32_t i = 0;
-	void *value = NULL;
-
-	if (!load) {
-		length = velocities ? NR_VELOCITIES(pattern) : NR_VALUES(pattern);
-	}
-	terror(readWriteFd(&length, sizeof(length), fd, load, e))
-
-	for (i = 0; i < length; i++) {
-		if (!load) {
-			value = g_slist_nth_data(velocities ?
-			  VELOCITIES(pattern) : VALUES(pattern), i);
-		}
-		terror(loadStoreValue(&value, pattern, fd, load, velocities, e))
-		if (load) {
-			if (velocities) {
-				VELOCITIES(pattern) =
-				  g_slist_append(VELOCITIES(pattern), value);
-			} else {
-				VALUES(pattern) = g_slist_append(VALUES(pattern), value);
-			}
-		}
-	}
-
-finish:
-	return;
-}
-
-static void loadStoreValues(pattern_t *pattern, int fd, gboolean load, err_t *e)
-{
-	terror(loadStoreValuesVelocities(pattern, fd, load, FALSE, e))
-
-finish:
-	return;
-}
-
-static void loadStoreVelocities(pattern_t *pattern, int fd,
-  gboolean load, err_t *e)
-{
-	terror(loadStoreValuesVelocities(pattern, fd, load, TRUE, e))
-
-finish:
-	return;
-}
-
-static void loadStoreStep(void *step, pattern_t *pattern, int fd,
-  uint32_t idx, gboolean load, err_t *e)
-{
-	MARK();
-
-	gint valuePosition = -1;
-	gint velocityPosition = -1;
-	noteUserStep_t *noteUserStep = NULL;
-	gboolean set = FALSE;
-	gboolean slide = FALSE;
-
-	terror(readWriteFd(LOCKED_PTR(step, TYPE(pattern)),
-	  sizeof(LOCKED(step, TYPE(pattern))), fd, load, e))
-
-	if (IS_DUMMY(pattern)) {
-		dummyUserStep_t *dummyUserStep = (dummyUserStep_t *) step;
-
-		if (!load) {
-			set = dummyUserStep->set;
-		}
-		terror(readWriteFd(&set, sizeof(set), fd, load, e))
-		if ((load)&&(set)) {
-			terror(setDummyStep(pattern, dummyUserStep, set, &lockContext, e))
-		}
-		goto finish;
-	}
-
-	if ((!load)&&(VALUE(step, TYPE(pattern)) != NULL)) {
-		valuePosition = g_slist_position(VALUES(pattern),
-		  (GSList *) VALUE(step, TYPE(pattern)));
-		if (IS_NOTE(pattern))  {
-			velocityPosition = g_slist_position(VELOCITIES(pattern),
-			  (GSList *) VELOCITY(step, TYPE(pattern)));
-		}
-	}
-	terror(readWriteFd(&valuePosition, sizeof(valuePosition), fd, load, e))
-	if (IS_NOTE(pattern)) {
-		terror(readWriteFd(&velocityPosition,
-		  sizeof(velocityPosition), fd, load, e))
-	}
-	if ((load)&&(valuePosition > -1)) {
-		if (IS_NOTE(pattern)) {
-			terror(setNoteStep(pattern, (noteUserStep_t *) step,
-			  g_slist_nth(VALUES(pattern), valuePosition),
-			  g_slist_nth(VELOCITIES(pattern), velocityPosition),
-			  idx, &lockContext, FALSE, e))
-		} else {
-			terror(setControllerStep(pattern, (controllerUserStep_t *) step,
-			  g_slist_nth(VALUES(pattern), valuePosition), idx,
-			  &lockContext, e))
-		}
-	}
-	if (IS_CONTROLLER(pattern)) {
-		goto finish;
-	}
-
-	noteUserStep = (noteUserStep_t *) step;
-	if (!load) {
-		slide = noteUserStep->slide;
-	}
-	terror(readWriteFd(&slide, sizeof(slide), fd, load, e))
-	if (load&&slide) {
-		terror(setSlide(pattern, noteUserStep, slide,
-		  idx, &lockContext, FALSE, e))
-	}
-	terror(readWriteFd(&(noteUserStep->slideLocked),
-	  sizeof(noteUserStep->slideLocked), fd, load, e))
-
-
-finish:
-	return;
-}
-
-static void loadStorePattern(pattern_t **pattern, int fd, gboolean load,
-  pattern_t *parent, err_t *e)
-{
-	MARK();
-
-	void *freeMe = NULL;
-	pattern_t *p = NULL;
-
-	if (load) {
-		freeMe = p = allocatePattern(parent);
-		PARENT(p) = parent;
-		terror(NAME(p) = readStringFromFd(fd, e))	
-	} else {
-		p = *pattern;
-		terror(writeStringToFd(NAME(p), fd, e))
-	}
-
-	terror(readWriteFd(&TYPE(p),
-	  sizeof(TYPE(p)), fd, load, e))
-	if (!IS_DUMMY(p)) {
-		terror(readWriteFd((void *) PTR_CHANNEL(p),
-		  sizeof(CHANNEL(p)), fd, load, e))
-	}
-	terror(readWriteFd((void *) &NR_USERSTEPS_PER_BAR(p),
-	  sizeof(NR_USERSTEPS_PER_BAR(p)), fd, load, e))
-	terror(readWriteFd((void *) &NR_BARS(p),
-	  sizeof(NR_BARS(p)), fd, load, e))
-
-	if (load) {
-		terror(adjustSteps(p, NR_BARS(p),
-		  NR_USERSTEPS_PER_BAR(p), &lockContext, FALSE, 0,e))
-	}
-
-	if (!IS_DUMMY(p)) {
-		terror(loadStoreValues(p, fd, load, e))
-		if (!IS_NOTE(p)) {
-			terror(readWriteFd((void *) PTR_PARAMETER(p),
-			  sizeof(PARAMETER(p)), fd, load, e))
-		}
-		terror(loadStoreVelocities(p, fd, load, e))
-	}
-
-	for (uint32_t i = 0; i < NR_USERSTEPS(p); i++) {
-		void *step = USERSTEP_AT(p, i);
-		terror(loadStoreStep(step, p, fd, i, load, e))
-	}
-
-	terror(loadStoreChildren(p, fd, load, e))
-
-	if (load) {
-		*pattern = p;
-	}
-	freeMe = NULL;
-finish:
-	if (freeMe != NULL) {
-		freePattern((pattern_t *) freeMe);
-	}
-}
-
-
 
 static void cbLoad(void *data)
 {
@@ -2643,17 +2306,23 @@ static void cbLoad(void *data)
 
 	err_t error;
 	err_t *e = &error;
-	int fd = -1;
 	char *path = NULL;
 	gboolean locked = FALSE;
 	pattern_t *pattern = NULL;
 	uint32_t locks = LOCK_DATA;
+	File *file = NULL;
+	FileInputStream *fileInputStream = NULL;
 
 	initErr(e);
 
 	terror(path = getPath(TRUE, e))
-	terror(failIfFalse((fd = open(path, O_RDONLY)) >= 0))
-	terror(loadStorePattern(&pattern, fd, TRUE, (pattern_t *) patterns.root, e))
+
+	terror(failIfFalse(((file = new File(path)) != NULL)))
+	terror(failIfFalse(((fileInputStream =
+	  new FileInputStream(*file)) != NULL)))
+	terror(fileInputStream->openedOk())
+	terror(loadStorePattern(&lockContext, &pattern, fileInputStream, TRUE,
+	  (pattern_t *) patterns.root, e))
 	terror(getLocks(&lockContext, locks, e))
 	locked = TRUE;
 	if ((IS_DUMMY(pattern))&&(NR_USERSTEPS(pattern) == 1)&&
@@ -2680,8 +2349,11 @@ finish:
 	if (pattern != NULL) {
 		freePattern(pattern);
 	}
-	if (fd >= 0) {
-		close(fd);
+	if (fileInputStream != NULL) {
+		delete fileInputStream;
+	}
+	if (file != NULL) {
+		delete file;
 	}
 	free(path);
 	if (hasFailed(e)) {
@@ -2694,15 +2366,21 @@ static void cbStore(void *data)
 {
 	MARK();
 
-	int fd = -1;
 	char *path = NULL;
 	char *tmp = NULL;
+	File *file = NULL;
+	FileOutputStream *fileOutputStream = NULL;
 	err_t error;
 	err_t *e = &error;
 
 	initErr(e);
 
 	terror(path = getPath(FALSE, e))
+
+	terror(failIfFalse(((file = new File(path)) != NULL)))
+	terror(failIfFalse(((fileOutputStream =
+	  new FileOutputStream(*file)) != NULL)))
+	terror(fileOutputStream->openedOk())
 
 	if ((strrstr(path, EXTENSION)) !=
 	  (path + strlen(path) - (sizeof(EXTENSION) - 1))) {
@@ -2711,14 +2389,16 @@ static void cbStore(void *data)
 		free(tmp);
 	}
 
-	terror(failIfFalse((fd =
-	  open(path, O_WRONLY | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP)) >= 0))
-	terror(loadStorePattern(&current.pattern, fd,
+	terror(loadStorePattern(&lockContext, &current.pattern, fileOutputStream,
 	  FALSE, (pattern_t *) patterns.root, e))
+	fileOutputStream->flush();
 
 finish:
-	if (fd >= 0) {
-		close(fd);
+	if (fileOutputStream != NULL) {
+		delete fileOutputStream;
+	}
+	if (file != NULL) {
+		delete file;
 	}
 	free(path);
 	if (hasFailed(e)) {

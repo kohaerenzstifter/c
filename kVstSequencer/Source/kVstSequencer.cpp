@@ -1017,3 +1017,345 @@ gboolean isAnyStepLockedByParent(pattern_t *pattern)
 
 	return result;
 }
+
+
+static void readWriteStream(void *data, uint32_t length, void *stream,
+  gboolean reading, err_t *e)
+{
+	MARK();
+
+	if (reading) {
+		InputStream *memoryInputStream = (InputStream *) stream;
+		terror(failIfFalse(memoryInputStream->read(data, length) == length))
+	} else {
+		OutputStream *memoryOutputStream = (OutputStream *) stream;
+		terror(failIfFalse(memoryOutputStream->write(data, length)))
+	}
+
+finish:
+	return;
+}
+
+static char *readStringFromStream(InputStream *memoryInputStream, err_t *e)
+{
+	MARK();
+
+	size_t length = 0;
+	char *result = NULL;
+	char *_result = NULL;
+
+	terror(readWriteStream(&length, sizeof(length), memoryInputStream, TRUE, e))
+	_result = (char *) calloc(1, (length + 1));
+	terror(readWriteStream(_result, length, memoryInputStream, TRUE, e))
+	_result[length] = '\0';
+
+	result = _result; _result = NULL;
+finish:
+	return result;
+}
+
+static void writeStringToStream(char *string,
+  OutputStream *memoryOutputStream, err_t *e)
+{
+	MARK();
+
+	size_t length = strlen(string);
+
+	terror(readWriteStream(&length, sizeof(length),
+	  memoryOutputStream, FALSE, e))
+	terror(readWriteStream(string, length, memoryOutputStream, FALSE, e))
+
+finish:
+	return;
+}
+
+static void loadStoreControllerValue(controllerValue_t **controllerValue,
+  void *stream, gboolean load, err_t *e)
+{
+	MARK();
+
+	controllerValue_t *freeMe = NULL;
+
+	if (load) {
+		freeMe = (*controllerValue) = allocateControllerValue();
+		terror((*controllerValue)->name =
+		  readStringFromStream(((InputStream *) stream), e))
+	} else {
+		terror(writeStringToStream((char *) (*controllerValue)->name,
+		  ((OutputStream *) stream), e))
+	}
+
+	terror(readWriteStream((void *) &((*controllerValue)->value),
+	  sizeof((*controllerValue)->value), stream, load, e))
+
+	freeMe = NULL;
+finish:
+	if (freeMe != NULL)  {
+		freeControllerValue(freeMe);
+	}
+}
+
+static void loadStoreNoteValue(noteValue_t **noteValue, void *stream,
+  gboolean load, err_t *e)
+{
+	MARK();
+
+	noteValue_t *freeMe = NULL;
+
+	if (load) {
+		freeMe = (*noteValue) = allocateNoteValue();
+		terror((*noteValue)->name =
+		  readStringFromStream(((InputStream *) stream), e))
+	} else {
+		terror(writeStringToStream((char *) (*noteValue)->name,
+		  ((OutputStream *) stream), e))
+	}
+
+	terror(readWriteStream((void *) &((*noteValue)->note),
+	  sizeof((*noteValue)->note), stream, load, e))
+	terror(readWriteStream((void *) &((*noteValue)->sharp),
+	  sizeof((*noteValue)->sharp), stream, load, e))
+	terror(readWriteStream((void *) &((*noteValue)->octave),
+	  sizeof((*noteValue)->octave), stream, load, e))
+
+	freeMe = NULL;
+finish:
+	if (freeMe != NULL) {
+		freeNoteValue(freeMe);
+	}
+}
+
+static void loadStoreValue(void **value, pattern_t *pattern, void *stream,
+  gboolean load, gboolean velocities, err_t *e)
+{
+	MARK();
+
+	if (velocities || IS_CONTROLLER(pattern)) {
+		terror(loadStoreControllerValue(((controllerValue_t **) value),
+		  stream, load, e))
+	} else {
+		terror(loadStoreNoteValue(((noteValue_t **) value), stream, load, e))
+	}
+
+finish:
+	return;
+}
+
+static void loadStoreValuesVelocities(pattern_t *pattern, void *stream,
+  gboolean load, gboolean velocities, err_t *e)
+{
+	MARK();
+
+	guint length = 0;
+	uint32_t i = 0;
+	void *value = NULL;
+
+	if (!load) {
+		length = velocities ? NR_VELOCITIES(pattern) : NR_VALUES(pattern);
+	}
+	terror(readWriteStream(&length, sizeof(length), stream, load, e))
+
+	for (i = 0; i < length; i++) {
+		if (!load) {
+			value = g_slist_nth_data(velocities ?
+			  VELOCITIES(pattern) : VALUES(pattern), i);
+		}
+		terror(loadStoreValue(&value, pattern, stream, load, velocities, e))
+		if (load) {
+			if (velocities) {
+				VELOCITIES(pattern) =
+				  g_slist_append(VELOCITIES(pattern), value);
+			} else {
+				VALUES(pattern) = g_slist_append(VALUES(pattern), value);
+			}
+		}
+	}
+
+finish:
+	return;
+}
+
+static void loadStoreValues(pattern_t *pattern, void *stream,
+  gboolean load, err_t *e)
+{
+	terror(loadStoreValuesVelocities(pattern, stream, load, FALSE, e))
+
+finish:
+	return;
+}
+
+static void loadStoreVelocities(pattern_t *pattern, void *stream,
+  gboolean load, err_t *e)
+{
+	terror(loadStoreValuesVelocities(pattern, stream, load, TRUE, e))
+
+finish:
+	return;
+}
+
+static void loadStoreStep(lockContext_t *lockContext, void *step,
+  pattern_t *pattern, void *stream, uint32_t idx, gboolean load, err_t *e)
+{
+	MARK();
+
+	gint valuePosition = -1;
+	gint velocityPosition = -1;
+	noteUserStep_t *noteUserStep = NULL;
+	gboolean set = FALSE;
+	gboolean slide = FALSE;
+
+	terror(readWriteStream(LOCKED_PTR(step, TYPE(pattern)),
+	  sizeof(LOCKED(step, TYPE(pattern))), stream, load, e))
+
+	if (IS_DUMMY(pattern)) {
+		dummyUserStep_t *dummyUserStep = (dummyUserStep_t *) step;
+
+		if (!load) {
+			set = dummyUserStep->set;
+		}
+		terror(readWriteStream(&set, sizeof(set), stream, load, e))
+		if ((load)&&(set)) {
+			terror(setDummyStep(pattern, dummyUserStep, set, lockContext, e))
+		}
+		goto finish;
+	}
+
+	if ((!load)&&(VALUE(step, TYPE(pattern)) != NULL)) {
+		valuePosition = g_slist_position(VALUES(pattern),
+		  (GSList *) VALUE(step, TYPE(pattern)));
+		if (IS_NOTE(pattern))  {
+			velocityPosition = g_slist_position(VELOCITIES(pattern),
+			  (GSList *) VELOCITY(step, TYPE(pattern)));
+		}
+	}
+	terror(readWriteStream(&valuePosition, sizeof(valuePosition),
+	  stream, load, e))
+	if (IS_NOTE(pattern)) {
+		terror(readWriteStream(&velocityPosition,
+		  sizeof(velocityPosition), stream, load, e))
+	}
+	if ((load)&&(valuePosition > -1)) {
+		if (IS_NOTE(pattern)) {
+			terror(setNoteStep(pattern, (noteUserStep_t *) step,
+			  g_slist_nth(VALUES(pattern), valuePosition),
+			  g_slist_nth(VELOCITIES(pattern), velocityPosition),
+			  idx, lockContext, FALSE, e))
+		} else {
+			terror(setControllerStep(pattern, (controllerUserStep_t *) step,
+			  g_slist_nth(VALUES(pattern), valuePosition), idx,
+			  lockContext, e))
+		}
+	}
+	if (IS_CONTROLLER(pattern)) {
+		goto finish;
+	}
+
+	noteUserStep = (noteUserStep_t *) step;
+	if (!load) {
+		slide = noteUserStep->slide;
+	}
+	terror(readWriteStream(&slide, sizeof(slide), stream, load, e))
+	if (load&&slide) {
+		terror(setSlide(pattern, noteUserStep, slide,
+		  idx, lockContext, FALSE, e))
+	}
+	terror(readWriteStream(&(noteUserStep->slideLocked),
+	  sizeof(noteUserStep->slideLocked), stream, load, e))
+
+
+finish:
+	return;
+}
+
+static void loadStoreChildren(lockContext_t *lockContext, pattern_t *parent,
+  void *stream, gboolean load, err_t *e)
+{
+	MARK();
+
+	uint32_t count = 0;
+
+	if (!load) {
+		count = g_slist_length((GSList *) parent->children);
+	}
+
+	terror(readWriteStream(&count, sizeof(count), stream, load, e))
+
+	for (uint32_t i = 0; i < count; i++) {
+		pattern_t *child = NULL;
+		if (!load) {
+			child =
+			  (pattern_t *) g_slist_nth_data((GSList *) parent->children, i);
+		}
+		terror(loadStorePattern(lockContext, &child, stream, load, parent, e))
+		if (load) {
+			parent->children =
+			  g_slist_append((GSList *) parent->children, child);
+		}
+	}
+
+finish:
+	return;
+}
+
+void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
+  void *stream, gboolean load, pattern_t *parent,
+  err_t *e)
+{
+	MARK();
+
+	void *freeMe = NULL;
+	pattern_t *p = NULL;
+	OutputStream *memoryOutputStream = NULL;
+	InputStream *memoryInputStream = NULL;
+
+	if (load) {
+		memoryInputStream = (InputStream *) stream;
+		freeMe = p = allocatePattern(parent);
+		PARENT(p) = parent;
+		terror(NAME(p) = readStringFromStream(memoryInputStream, e))	
+	} else {
+		memoryOutputStream = (OutputStream *) stream;
+		p = *pattern;
+		terror(writeStringToStream(NAME(p), memoryOutputStream, e))
+	}
+
+	terror(readWriteStream(&TYPE(p), sizeof(TYPE(p)), stream, load, e))
+	if (!IS_DUMMY(p)) {
+		terror(readWriteStream((void *) PTR_CHANNEL(p),
+		  sizeof(CHANNEL(p)), stream, load, e))
+	}
+	terror(readWriteStream((void *) &NR_USERSTEPS_PER_BAR(p),
+	  sizeof(NR_USERSTEPS_PER_BAR(p)), stream, load, e))
+	terror(readWriteStream((void *) &NR_BARS(p),
+	  sizeof(NR_BARS(p)), stream, load, e))
+
+	if (load) {
+		terror(adjustSteps(p, NR_BARS(p),
+		  NR_USERSTEPS_PER_BAR(p), lockContext, FALSE, 0,e))
+	}
+
+	if (!IS_DUMMY(p)) {
+		terror(loadStoreValues(p, stream, load, e))
+		if (!IS_NOTE(p)) {
+			terror(readWriteStream((void *) PTR_PARAMETER(p),
+			  sizeof(PARAMETER(p)), stream, load, e))
+		}
+		terror(loadStoreVelocities(p, stream, load, e))
+	}
+
+	for (uint32_t i = 0; i < NR_USERSTEPS(p); i++) {
+		void *step = USERSTEP_AT(p, i);
+		terror(loadStoreStep(lockContext, step, p, stream, i, load, e))
+	}
+
+	terror(loadStoreChildren(lockContext, p, stream, load, e))
+
+	if (load) {
+		*pattern = p;
+	}
+	freeMe = NULL;
+finish:
+	if (freeMe != NULL) {
+		freePattern((pattern_t *) freeMe);
+	}
+}
