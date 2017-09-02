@@ -131,6 +131,86 @@ finish:
 	return;
 }
 
+static int32_t nextPressedIdx = 0;
+static int32_t pressed[20];
+
+static void addNote(int32_t number)
+{
+	MARK();
+
+	gboolean ignore = (nextPressedIdx >= ARRAY_SIZE(pressed));
+
+	for (unsigned int i = 0; ((!ignore) && (i < nextPressedIdx)); i++) {
+		if (pressed[i] == number) {
+			ignore = TRUE;
+			break;
+		}
+	}
+
+	if (ignore) {
+		goto finish;
+	}
+
+	pressed[nextPressedIdx++] = number;
+
+finish:
+	return;
+}
+
+static void removeNote(int32_t number)
+{
+	MARK();
+
+	unsigned int i = 0;
+	int32_t atIndex = -1;
+
+	for (i = 0; i < nextPressedIdx; i++) {
+		if (pressed[i] == number) {
+			atIndex = i;
+			break;
+		}
+	}
+
+	if (atIndex < 0) {
+		goto finish;
+	}
+
+	for (i = atIndex; i < (nextPressedIdx - 1); i++) {
+		pressed[i] = pressed[i + 1];
+	}
+
+	nextPressedIdx--;
+
+finish:
+	return;
+}
+
+static void setRoot(MidiBuffer& midiBuffer)
+{
+	MARK();
+
+	MidiMessage msg;
+	int32_t ignore = 0;
+
+	for (MidiBuffer::Iterator it(midiBuffer); it.getNextEvent(msg, ignore);) {
+		if (msg.isNoteOn()) {
+			addNote(msg.getNoteNumber());
+		} else if (msg.isNoteOff()) {
+			removeNote(msg.getNoteNumber());
+		}
+	}
+
+	patterns.root = NULL;
+
+	if (nextPressedIdx > 0) {
+		int32_t idx = pressed[(nextPressedIdx - 1)] - notes[0].midiValue;
+
+		if (idx < ARRAY_SIZE(banks)) {
+			patterns.root = banks[idx];
+		}
+	}
+}
+
 static void process(
   AudioPlayHead::CurrentPositionInfo *currentPositionInfo,
   MidiBuffer& midiBuffer,
@@ -161,6 +241,12 @@ static void process(
 		stopped = TRUE;
 	}
 
+	if (live) {
+		setRoot(midiBuffer);
+	}
+
+	midiBuffer.clear();
+
 	for (cur = midiMessages; cur != NULL; cur = g_slist_next(cur)) {
 		MidiMessage mm;
 		midiMessage = (midiMessage_t *) cur->data;
@@ -184,6 +270,7 @@ static void process(
 	if (stopped) {
 		goto finish;
 	}
+
 	atMicrotick =
 	  (((double) currentPositionInfo->ppqPosition) * MILLION)
 	  * (((double) MICROTICKS_PER_BAR) / millionTimesNumerator);
@@ -191,17 +278,20 @@ static void process(
 		nextEventStep = atMicrotick;
 	}
 	while (atMicrotick >= nextEventStep) {
-		performStep(((pattern_t *) patterns.root), nextEventStep,
-		  midiBuffer, &position);
+		if (patterns.root != NULL) {
+			performStep(((pattern_t *) patterns.root), nextEventStep,
+			  midiBuffer, &position);
+		}
 		nextEventStep++;
 	}
 	stepToSignal = (nextEventStep - 1) % (MAX_BARS * MAX_EVENTSTEPS_PER_BAR);
 	guiSignalStep(stepToSignal);
+
 finish:
 	isPlaying = currentPositionInfo->isPlaying;
 	free(midiMessage);
 	if (locked)  {
-		releaseLocks(&lockContext, locks, e);
+		releaseLocks(&lockContext, locks);
 	}
 }
 
@@ -266,7 +356,7 @@ KVstSequencerAudioProcessor::KVstSequencerAudioProcessor()
 {
 	MARK();
 
-#if 1
+#if 0
 	char outbuffer[100];
 	char errbuffer[100];
 
@@ -276,7 +366,6 @@ KVstSequencerAudioProcessor::KVstSequencerAudioProcessor()
 	mkfifo(errbuffer, 0666);
 	setOutput(outbuffer, errbuffer, NULL);
 #endif
-
 
 	err_t err;
 	err_t *e = &err;
@@ -520,20 +609,42 @@ void KVstSequencerAudioProcessor::getStateInformation (MemoryBlock& destData)
     // You should use this method to store your parameters in the memory block.
     // You could do that either as raw data, or use the XML or ValueTree classes
     // as intermediaries to make it easy to save and load complex data.
+	uint32_t zero = 0;
+	gboolean locked = FALSE;
 	MemoryOutputStream *memoryOutputStream = NULL;
+	uint32_t locks = LOCK_DATA | LOCK_SEQUENCER;
 	err_t err;
 	err_t *e = &err;
 
 	initErr(e);
 
-	memoryOutputStream =
-	  new MemoryOutputStream(destData, FALSE);
+	memoryOutputStream = new MemoryOutputStream(destData, FALSE);
 
-	terror(loadStorePattern(&lockContext, ((pattern_t **) &(patterns.root)),
-	  memoryOutputStream, FALSE, (pattern_t *) NULL, e))
+	terror(getLocks(&lockContext, locks, e))
+	locked = TRUE;
+
+	if (live) {
+		terror(failIfFalse(memoryOutputStream->write(&zero, sizeof(zero))))
+	} else {
+		terror(loadStorePattern(&lockContext, ((pattern_t **) &(patterns.root)),
+		  memoryOutputStream, FALSE, (pattern_t *) NULL, e))
+	}
+
+	for (uint32_t i = 0; i < ARRAY_SIZE(banks); i++) {
+		if (banks[i] == NULL) {
+			terror(failIfFalse(memoryOutputStream->write(&zero, sizeof(zero))))
+			continue;
+		}
+		terror(loadStorePattern(&lockContext, ((pattern_t **) &banks[i]),
+		  memoryOutputStream, FALSE, (pattern_t *) NULL, e))
+	}
+
 	memoryOutputStream->flush();
 
 finish:
+	if (locked)  {
+		releaseLocks(&lockContext, locks);
+	}
 	if (memoryOutputStream != NULL) {
 		delete memoryOutputStream;
 	}
@@ -550,25 +661,57 @@ void KVstSequencerAudioProcessor::setStateInformation (const void* data,
 	block, whose contents will have been created by the getStateInformation()
 	call.
 */
+	uint32_t length = 0;
+	gboolean locked = FALSE;
 	MemoryInputStream *memoryInputStream = NULL;
+	uint32_t locks = LOCK_DATA | LOCK_SEQUENCER;
 	pattern_t *pattern = NULL;
 	err_t err;
 	err_t *e = &err;
 
 	initErr(e);
 
-	memoryInputStream =
-	  new MemoryInputStream(data, sizeInBytes, FALSE);
+	memoryInputStream = new MemoryInputStream(data, sizeInBytes, FALSE);
 
-	terror(loadStorePattern(&lockContext, ((pattern_t **) &pattern),
-	  memoryInputStream, TRUE, (pattern_t *) NULL, e))
-	if (patterns.root != NULL) {
-		freePattern(((pattern_t *) patterns.root));
+	terror(getLocks(&lockContext, locks, e))
+	locked = TRUE;
+
+	terror(failIfFalse(memoryInputStream->read(&length, sizeof(length))
+	  == sizeof(length)))
+	if (length != ZERO) {
+		terror(memoryInputStream->setPosition((memoryInputStream->getPosition()
+		  - sizeof(length))))
+		terror(loadStorePattern(&lockContext, ((pattern_t **) &pattern),
+		  memoryInputStream, TRUE, (pattern_t *) NULL, e))
+
+		terror(setLive(&lockContext, pattern, e))
+		pattern = NULL;
+	} else {
+		terror(setLive(&lockContext, NULL, e))
 	}
-	patterns.root = pattern;
-	pattern = NULL;
+
+	for (uint32_t i = 0; i < ARRAY_SIZE(banks); i++) {
+		if (banks[i] != NULL) {
+			freePattern(((pattern_t *) banks[i]));
+			banks[i] = NULL;
+		}
+		terror(failIfFalse(memoryInputStream->read(&length, sizeof(length))
+		  == sizeof(length)))
+		if (length == ZERO) {
+			continue;
+		}
+		terror(memoryInputStream->setPosition((
+		  memoryInputStream->getPosition() - sizeof(length))))
+		terror(loadStorePattern(&lockContext, ((pattern_t **) &pattern),
+		  memoryInputStream, TRUE, (pattern_t *) NULL, e))
+		banks[i] = pattern;
+		pattern = NULL;
+	}
 
 finish:
+	if (locked)  {
+		releaseLocks(&lockContext, locks);
+	}
 	if (memoryInputStream != NULL) {
 		delete memoryInputStream;
 	}

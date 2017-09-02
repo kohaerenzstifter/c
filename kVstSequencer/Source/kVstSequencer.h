@@ -24,6 +24,8 @@
 extern "C" {
 #endif
 
+#define ZERO 0
+
 #define CROTCHETS_PER_BAR 4
 #define TICKS_PER_CROTCHET 24
 #define TICKS_PER_BAR (TICKS_PER_CROTCHET * CROTCHETS_PER_BAR)
@@ -104,6 +106,8 @@ typedef enum {
   ((n) == NOTE_G) ? 'g' : \
   ((n) == NOTE_A) ? 'a' : \
   'b'
+
+#define NR_BANKS 12
 
 typedef struct {
 	volatile char *name;
@@ -346,6 +350,12 @@ typedef struct pattern {
 
 VARIABLE( \
   volatile gboolean, \
+  live, \
+  FALSE \
+)
+
+VARIABLE( \
+  volatile gboolean, \
   goingDown, \
   FALSE \
 )
@@ -388,6 +398,12 @@ VARIABLE( \
   { \
     .root = NULL \
   } \
+)
+
+VARIABLE ( \
+  volatile pattern_t *, \
+  banks[NR_BANKS], \
+  { NULL }
 )
 
 VARIABLE ( \
@@ -456,9 +472,10 @@ void deleteChild(pattern_t *parent, GSList *child,
   lockContext_t *lockContext, err_t *e);
 void freeValue(pattern_t *pattern, void *value);
 void getLocks(lockContext_t *lockContext, uint32_t locks, err_t *e);
-void releaseLocks(lockContext_t *lockContext, uint32_t locks, err_t *e);
+void releaseLocks(lockContext_t *lockContext, uint32_t locks);
 gboolean anyChildStepSet(pattern_t *pattern, uint32_t idx);
 void unsoundPattern(lockContext_t *lockContext, pattern_t *pattern, err_t *e);
+void unsoundAllPatterns(lockContext_t *lockContext, err_t *e);
 void *output(void *param);
 void *input(void *param);
 void allNotesOff(lockContext_t *lockContext, gboolean alreadyLocked, err_t *e);
@@ -477,6 +494,7 @@ gboolean isAnyStepLockedByParent(pattern_t *pattern);
 void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e);
 void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
   void *stream, gboolean load, pattern_t *parent, err_t *e);
+void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e);
 
 #ifdef __cplusplus
 };

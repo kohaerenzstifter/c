@@ -23,8 +23,6 @@
 
 DECLARE_LOCKCONTEXT
 
-static void enterPattern(pattern_t *pattern);
-
 static Rectangle<int> getSubRectangle(gboolean vertical,
   Rectangle<int> *rectangle, uint32_t fraction)
 {
@@ -459,7 +457,7 @@ static char *intToString(int32_t number);
 static SimpleLabel *getLabel(Container *container, const char *text);
 static SimpleButton *getSimpleButton(Container *container, const char *text,
   fnButtonCallback_t callback, void *data);
-static void renderPattern(void);
+static void render(void);
 static void cbDecrement(void *data);
 static void cbIncrement(void *data);
 
@@ -821,17 +819,17 @@ static void cbDoAddPattern(void *data)
 	CHILDREN(createPattern.parent) =
 	  g_slist_append((GSList *) CHILDREN(createPattern.parent), pattern);
 
-	terror(releaseLocks(&lockContext, locks, e))
+	releaseLocks(&lockContext, locks);
 	locked = FALSE;
 
-	renderPattern();
+	render();
 
 	showDialog(getPatternListDialog);
 
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks, NULL);
+		releaseLocks(&lockContext, locks);
 	}
 }
 
@@ -949,12 +947,12 @@ static void cbSetupNoteValue(void *data)
 		  backupVelocity, i, &lockContext, FALSE, e))
 	}
 
-	renderPattern();
+	render();
 	showDialog(getValuesDialog);
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks, NULL);
+		releaseLocks(&lockContext, locks);
 	}
 }
 
@@ -981,7 +979,7 @@ static void cbTriggerControllerValue(void *data)
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks, NULL);
+		releaseLocks(&lockContext, locks);
 	}
 }
 
@@ -1048,7 +1046,7 @@ static void cbSetupControllerValue(void *data)
 		}
 	}
 
-	renderPattern();
+	render();
 
 	if (IS_NOTE(current.pattern)) {
 		showDialog(getVelocitiesDialog);
@@ -1058,7 +1056,7 @@ static void cbSetupControllerValue(void *data)
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks, NULL);
+		releaseLocks(&lockContext, locks);
 	}
 }
 
@@ -1410,8 +1408,8 @@ static Container *getSetupValueDialog(Component *component)
 
 static Container *stepsBox = NULL;
 static Container *stepsView = NULL;
-static SimpleButton *parentButton = NULL;
-static SimpleButton *topButton = NULL;
+static SimpleButton *parentOrModeButton = NULL;
+static SimpleButton *topOrAssignOrEditButton = NULL;
 static SimpleButton *promoteButton = NULL;
 static SimpleButton *loadButton = NULL;
 static SimpleButton *storeButton = NULL;
@@ -1428,22 +1426,31 @@ static SpinButton *randomiseSpinButton = NULL;
 static SimpleButton *shiftLeftButton = NULL;
 static SimpleButton *shiftRightButton = NULL;
 
+static void setTexts(void)
+{
+	
+	if (live) {
+		topOrAssignOrEditButton->setButtonText("Go Unlive and Edit ...");
+	} else {
+		parentOrModeButton->setButtonText((IS_ROOT(current.pattern)) ?
+		  "Go Live!" : "Parent!");
+		topOrAssignOrEditButton->setButtonText((IS_ROOT(current.pattern)) ?
+		  "Assign ..." : "Top!");
+	}
+}
+
 static void enableButtons(void)
 {
 	MARK();
 
 	uint32_t nrValues = NR_VALUES(current.pattern);
 
-	if (IS_ROOT(current.pattern)) {
-		goto finish;
-	}
-
 	if (IS_NOTE(current.pattern)) {
 		nrValues *= NR_VELOCITIES(current.pattern);
 	}
 
-	parentButton->setEnabled(TRUE);
-	topButton->setEnabled(TRUE);
+	parentOrModeButton->setEnabled(TRUE);
+	topOrAssignOrEditButton->setEnabled(TRUE);
 	promoteButton->setEnabled(!(IS_ROOT(PARENT(current.pattern))));
 	barsButton->setEnabled(
 	  (g_slist_length(((GSList *) CHILDREN(current.pattern))) < 1));
@@ -1568,7 +1575,7 @@ static void cbLockSlide(void *data)
 	uint32_t idx = GPOINTER_TO_UINT(data);
 	
 	lockSlide(current.pattern, idx);
-	renderPattern();
+	render();
 }
 
 static void cbLockUserStep(void *data)
@@ -1578,7 +1585,7 @@ static void cbLockUserStep(void *data)
 	uint32_t idx = GPOINTER_TO_UINT(data);
 	
 	lockUserStep(current.pattern, idx);
-	renderPattern();
+	render();
 }
 
 static void addLockButton(Container *container, gboolean locked,
@@ -1650,7 +1657,7 @@ static void cbSlide(void *data)
 
 	terror(setSlide(current.pattern, noteUserStep,
 	  (!noteUserStep->slide), idx, &lockContext, TRUE, e))
-	renderPattern();
+	render();
 
 finish:
 	return;
@@ -1694,7 +1701,7 @@ static void cbDummyStep(void *data)
 	dummyUserStep = (dummyUserStep_t *) USERSTEP_AT(current.pattern, idx);
 	terror(setDummyStep(current.pattern, dummyUserStep,
 	  !(dummyUserStep->set), &lockContext, e))
-	renderPattern();
+	render();
 
 finish:
 	return;
@@ -1730,7 +1737,7 @@ static void cbNoteStep(void *data)
 
 	terror(setNoteStep(current.pattern, noteUserStep,
 	  value, velocity, idx, &lockContext, TRUE, e))
-	renderPattern();
+	render();
 
 finish:
 	return;
@@ -1758,7 +1765,7 @@ static void cbControllerStep(void *data)
 
 	terror(setControllerStep(current.pattern, controllerUserStep,
 	  value, idx, &lockContext, e))
-	renderPattern();
+	render();
 
 finish:
 	return;
@@ -1818,21 +1825,25 @@ static void renderSteps(pattern_t *pattern, uint32_t bar)
 	signalling.userStepsPerBar = NR_USERSTEPS_PER_BAR(pattern);
 }
 
-static void renderPattern(void)
+static void render(void)
 {
 	MARK();
 
 	gboolean locked = FALSE;
-	uint32_t width = (WINDOW_WIDTH / (NR_USERSTEPS_PER_BAR(current.pattern))) <
+	uint32_t width = live? WINDOW_WIDTH :
+	  (WINDOW_WIDTH / (NR_USERSTEPS_PER_BAR(current.pattern))) <
 	  (width = (WINDOW_WIDTH / 16)) ?
 	  (width * NR_USERSTEPS_PER_BAR(current.pattern)) : WINDOW_WIDTH;
 
 	application.component->setSize(width, WINDOW_HEIGHT);
-	loadButton->setEnabled(TRUE);
-	storeButton->setEnabled(TRUE);
-	childrenButton->setEnabled(TRUE);
-	parentButton->setEnabled(FALSE);
-	topButton->setEnabled(FALSE);
+
+	setTexts();
+
+	loadButton->setEnabled(live ? FALSE : TRUE);
+	storeButton->setEnabled(live ? FALSE : TRUE);
+	childrenButton->setEnabled(live ? FALSE : TRUE);
+	parentOrModeButton->setEnabled(live ? FALSE : TRUE);
+	topOrAssignOrEditButton->setEnabled(TRUE);
 	promoteButton->setEnabled(FALSE);
 	barsButton->setEnabled(FALSE);
 	stepsPerBarButton->setEnabled(FALSE);
@@ -1844,15 +1855,29 @@ static void renderPattern(void)
 	randomiseButton->setEnabled(FALSE);
 	shiftLeftButton->setEnabled(FALSE);
 	shiftRightButton->setEnabled(FALSE);
+	randomiseSpinButton->setEnabled(live ? FALSE : TRUE);
 
 	if (stepsView !=  NULL) {
 		stepsBox->removeContainer(stepsView);
 		delete stepsView; stepsView = NULL;
 	}
 	g_slist_free(signalling.labels); signalling.labels = NULL;
-	if (IS_ROOT(current.pattern)) {
+	if (live) {
 		goto finish;
 	}
+
+	if (IS_ROOT(current.pattern)) {
+		gboolean enabled = FALSE;
+		for (unsigned int i = 0; i < NR_BANKS; i++) {
+			if (banks[i] != NULL) {
+				enabled = TRUE;
+				break;
+			}
+		}
+		parentOrModeButton->setEnabled(enabled);
+		goto finish;
+	}
+
 	enableButtons();
 	renderSteps(current.pattern, current.bar);
 finish:
@@ -1892,7 +1917,7 @@ static void cbSetBars(void *data)
 
 finish:
 	destroyDialog();
-	renderPattern();
+	render();
 }
 
 static void cbSetStepsPerBar(void *data)
@@ -1911,7 +1936,7 @@ static void cbSetStepsPerBar(void *data)
 
 finish:
 	destroyDialog();
-	renderPattern();
+	render();
 }
 
 static void cbPickBars(pickType_t pickType)
@@ -2024,6 +2049,16 @@ static Container *getNumberPickerDialog(Component *component,
 	return result;
 }
 
+static void enterPattern(pattern_t *pattern)
+{
+	MARK();
+
+	current.pattern = pattern;
+	current.bar = 0;
+
+	render();
+}
+
 static void cbEnterPattern(void *data)
 {
 	MARK();
@@ -2043,7 +2078,7 @@ static void cbDeletePattern(void *data)
 
 	terror(deleteChild(patternList.parent, ((GSList *) data), &lockContext, e))
 
-	renderPattern();
+	render();
 	showDialog(getPatternListDialog);
 
 finish:
@@ -2088,7 +2123,7 @@ static void cbDeleteValue(void *data)
 	VALUES(current.pattern) =
 	  g_slist_delete_link(VALUES(current.pattern), link);
 
-	renderPattern();
+	render();
 	showDialog(getValuesDialog);
 }
 
@@ -2103,7 +2138,7 @@ static void cbDeleteVelocity(void *data)
 	VELOCITIES(current.pattern) =
 	  g_slist_delete_link(VELOCITIES(current.pattern), link);
 
-	renderPattern();
+	render();
 	showDialog(getVelocitiesDialog);
 }
 
@@ -2174,12 +2209,129 @@ static Container *getValuesVelocitiesDialog(Component *component,
 
 static Container *getValuesDialog(Component *component)
 {
+	MARK();
+
 	return getValuesVelocitiesDialog(component, FALSE);
 }
 
 static Container *getVelocitiesDialog(Component *component)
 {
+	MARK();
+
 	return getValuesVelocitiesDialog(component, TRUE);
+}
+
+static pattern_t *clonePattern(pattern_t *cloneMe)
+{
+	MARK();
+
+	MemoryOutputStream *memoryOutputStream = NULL;
+	MemoryInputStream *memoryInputStream = NULL;
+	pattern_t *result = NULL;
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	memoryOutputStream = new MemoryOutputStream();
+	terror(loadStorePattern(&lockContext, ((pattern_t **) &cloneMe),
+	  memoryOutputStream, FALSE, ((pattern_t *) PARENT(cloneMe)), e))
+	memoryOutputStream->flush();
+
+	memoryInputStream = new MemoryInputStream(memoryOutputStream->getData(),
+	  memoryOutputStream->getDataSize(), FALSE);
+	terror(loadStorePattern(&lockContext, ((pattern_t **) &result),
+	  memoryInputStream, TRUE, (pattern_t *) NULL, e))
+
+finish:
+	if (memoryOutputStream != NULL) {
+		delete memoryOutputStream;
+	}
+	if (memoryInputStream != NULL) {
+		delete memoryInputStream;
+	}
+	return result;
+}
+
+static void cbAssignToBank(void *data)
+{
+	MARK();
+
+	uint32_t idx = GPOINTER_TO_UINT(data);
+
+	if (((pattern_t *) banks[idx]) != NULL) {
+		freePattern(((pattern_t *) banks[idx]));
+	}
+	banks[idx] = clonePattern(current.pattern);
+	destroyDialog();
+	render();
+}
+
+static void cbEditFromBank(void *data)
+{
+	MARK();
+
+	uint32_t idx = GPOINTER_TO_UINT(data);
+	pattern_t *pattern = clonePattern(((pattern_t *) banks[idx]));
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	destroyDialog();
+
+	terror(setLive(&lockContext, pattern, e))
+
+	enterPattern(pattern);
+
+finish:
+	return;
+}
+
+static void addBank(Component *component, Container *container,
+  uint32_t idx, char *label)
+{
+	MARK();
+
+	getSimpleButton(getBoxWithLabel(component, container, FALSE, label),
+	  live ? "Edit" : (banks[idx] == NULL) ? "Place" : "Replace",
+	  live ?  cbEditFromBank : cbAssignToBank,
+	  GUINT_TO_POINTER(idx))->setEnabled(live ? (banks[idx] != NULL) : TRUE);
+}
+
+static Container *getBanksDialog(Component *component)
+{
+	MARK();
+
+	char label[10];
+	uint32_t i = 0;
+	uint32_t idx = 0;
+	uint32_t octave = 0;
+	Container *result = new Container(component, TRUE);
+
+	while (i < NR_BANKS) {
+		snprintf(label, sizeof(label), "%c%u",
+		  NOTE2CHAR(notes[idx].name), octave);
+		addBank(component, result, i, label);
+		if (!notes[idx].sharpable) {
+			goto carryOn;
+		}
+		i++;
+		snprintf(label, sizeof(label), "%c#%u",
+		  NOTE2CHAR(notes[idx].name), octave);
+		addBank(component, result, i, label);
+carryOn:
+		i++;
+		idx++;
+		idx %= ARRAY_SIZE(notes);
+		if (idx == 0) {
+			octave++;
+		}
+	}
+
+	component->setSize(400, 300);
+
+	return result;
 }
 
 static Container *getPatternListDialog(Component *component)
@@ -2240,18 +2392,41 @@ static void deleteContainer(Container *container)
 	delete container;
 }
 
-static void cbParent(void *data)
+static void liveMode(void)
 {
 	MARK();
 
-	enterPattern(PARENT(current.pattern));
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	setLive(&lockContext, NULL, e);
+	render();
 }
 
-static void cbTop(void *data)
+static void cbParentOrMode(void *data)
 {
 	MARK();
 
-	enterPattern(((pattern_t  *) patterns.root));
+	if (current.pattern != patterns.root) {
+		enterPattern(PARENT(current.pattern));
+	} else {
+		liveMode();
+	}
+}
+
+static void cbTopOrAssignOrEdit(void *data)
+{
+	MARK();
+
+	if (live) {
+		showDialog(getBanksDialog);
+	} else if (current.pattern != patterns.root) {
+		enterPattern(((pattern_t  *) patterns.root));
+	} else {
+		showDialog(getBanksDialog);
+	}
 }
 
 static void cbPromote(void *data)
@@ -2265,7 +2440,7 @@ static void cbPromote(void *data)
 
 	terror(promotePattern(current.pattern, &lockContext, e))
 
-	renderPattern();
+	render();
 
 finish:
 	return;
@@ -2338,13 +2513,13 @@ static void cbLoad(void *data)
 		  g_slist_append((GSList *) patterns.root->children, pattern);
 	}
 	pattern = NULL;
-	terror(releaseLocks(&lockContext, locks, e))
+	releaseLocks(&lockContext, locks);
 	locked = FALSE;
-	renderPattern();
+	render();
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks, NULL);
+		releaseLocks(&lockContext, locks);
 	}
 	if (pattern != NULL) {
 		freePattern(pattern);
@@ -2456,7 +2631,7 @@ finish:
 static void shiftPattern(pattern_t *pattern, gboolean right, err_t *e)
 {
 	terror(shiftPattern2(pattern, right ? 1 : -1, e))
-	renderPattern();
+	render();
 
 finish:
 	return;
@@ -2504,7 +2679,7 @@ static void cbPrevious(void *data)
 	MARK();
 
 	current.bar--;
-	renderPattern();
+	render();
 }
 
 static void cbNext(void *data)
@@ -2512,7 +2687,7 @@ static void cbNext(void *data)
 	MARK();
 
 	current.bar++;
-	renderPattern();
+	render();
 }
 
 static void cbValues(void *data)
@@ -2540,7 +2715,7 @@ static void cbRandomise(void *data)
 	randomise(current.pattern, current.bar,
 	  randomiseSpinButton->value, &lockContext);
 
-	renderPattern();
+	render();
 	randomising = FALSE;
 
 finish:
@@ -2559,8 +2734,9 @@ static Container *getCentreBox(void)
 
 	result->addContainer(box);
 
-	parentButton = getSimpleButton(box, "Parent!", cbParent, NULL);
-	topButton = getSimpleButton(box, "Top!", cbTop, NULL);
+	parentOrModeButton = getSimpleButton(box, "Parent!", cbParentOrMode, NULL);
+	topOrAssignOrEditButton =
+	  getSimpleButton(box, "Top!", cbTopOrAssignOrEdit, NULL);
 	promoteButton = getSimpleButton(box, "Promote", cbPromote, NULL);
 	
 	box->addContainer(loadStoreBox);
@@ -2620,7 +2796,7 @@ static Container *getApplicationContainer(void)
 
 	//this initialisation is necessary because the editor may
 	//have been destroyed and created again => we must prevent
-	//stepsView to be delete()d in renderPattern()
+	//stepsView to be delete()d in render()
 	stepsView = NULL;
 	stepsBox = box = getLowerBox();
 	result->addContainer(box);
@@ -2637,16 +2813,6 @@ static void setup(KVstSequencerAudioProcessorEditor *editor)
 
 	application.component = editor;
 	application.container = getApplicationContainer();
-}
-
-static void enterPattern(pattern_t *pattern)
-{
-	MARK();
-
-	current.pattern = pattern;
-	current.bar = 0;
-
-	renderPattern();
 }
 
 static void teardown(void)

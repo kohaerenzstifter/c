@@ -89,11 +89,14 @@ finish:
 	return;
 }
 
-void releaseLocks(lockContext_t *lockContext, uint32_t locks, err_t *e)
+void releaseLocks(lockContext_t *lockContext, uint32_t locks)
 {
 	MARK();
 
-	defineError();
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
 
 	for (uint32_t i = 0, mask = 1; i < NR_MUTEXES; i++, mask <<= 1)  {
 		if (!(locks & mask)) {
@@ -201,7 +204,7 @@ static void unsoundNoteEvent(lockContext_t *lockContext,
 	MARK();
 
 	midiMessage_t *midiMessage = NULL;
-	terror(requireLocks(lockContext, (LOCK_DATA), e))
+	terror(requireLocks(lockContext, (LOCK_DATA | LOCK_SEQUENCER), e))
 
 	if (offNoteEvent->off.noteOffLink == NULL) {
 		goto finish;
@@ -238,6 +241,44 @@ void unsoundPattern(lockContext_t *lockContext,
 		}
 		terror(unsoundNoteEvent(lockContext, (noteEvent_t *)
 		  noteEventStep->onNoteEvent->on.offNoteEvent, e))
+	}
+
+finish:
+	return;
+}
+
+static void unsoundPattern2(lockContext_t *lockContext,
+  pattern_t *pattern, err_t *e)
+{
+	MARK();
+
+	defineError();
+
+	terror(requireLocks(lockContext, (LOCK_DATA | LOCK_SEQUENCER), e))
+
+	for (GSList *cur = ((GSList *) CHILDREN(pattern)); cur != NULL;
+	  cur = g_slist_next(cur)) {
+		terror(unsoundPattern2(lockContext, ((pattern_t *) cur->data), e))
+	}
+
+	if (IS_NOTE(pattern)) {
+		terror(unsoundPattern(lockContext, pattern, e))
+	}
+
+finish:
+	return;
+}
+
+void unsoundAllPatterns(lockContext_t *lockContext, err_t *e)
+{
+	MARK();
+
+	defineError();
+
+	terror(requireLocks(lockContext, (LOCK_DATA | LOCK_SEQUENCER), e))
+
+	if (patterns.root != NULL) {
+		terror(unsoundPattern2(lockContext, ((pattern_t *) patterns.root), e))
 	}
 
 finish:
@@ -505,7 +546,7 @@ void setDummyStep(pattern_t *pattern, dummyUserStep_t *dummyUserStep,
 
 finish:
 	if (locked) {
-		releaseLocks(lockContext, locks, NULL);
+		releaseLocks(lockContext, locks);
 	}
 }
 
@@ -528,7 +569,7 @@ void setControllerStep(pattern_t *pattern,
 
 finish:
 	if (locked) {
-		releaseLocks(lockContext, locks, NULL);
+		releaseLocks(lockContext, locks);
 	}
 }
 
@@ -568,7 +609,7 @@ void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
 
 finish:
 	if (locked) {
-		terror(releaseLocks(lockContext, locks, NULL))
+		releaseLocks(lockContext, locks);
 	}
 }
 
@@ -604,7 +645,7 @@ void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
 
 finish:
 	if (locked) {
-		terror(releaseLocks(lockContext, locks, NULL))
+		releaseLocks(lockContext, locks);
 	}
 }
 
@@ -778,7 +819,7 @@ void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
 
 finish:
 	if (locked) {
-		terror(releaseLocks(lockContext, locks, NULL))
+		releaseLocks(lockContext, locks);
 	}
 	free(userSteps);
 	free(eventSteps);
@@ -809,7 +850,7 @@ void deleteChild(pattern_t *parent, GSList *childLink,
 
 finish:
 	if (locked) {
-		terror(releaseLocks(lockContext, locks, NULL))
+		releaseLocks(lockContext, locks);
 	}
 }
 
@@ -843,7 +884,7 @@ void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e)
 
 finish:
 	if (locked) {
-		terror(releaseLocks(lockContext, locks, NULL))
+		releaseLocks(lockContext, locks);
 	}
 }
 
@@ -897,7 +938,7 @@ void allNotesOff(lockContext_t *lockContext, gboolean alreadyLocked, err_t *e)
 
 finish:
 	if (unlock) {
-		releaseLocks(lockContext, locks, NULL);
+		releaseLocks(lockContext, locks);
 	}
 }
 
@@ -1025,18 +1066,18 @@ static void readWriteStream(void *data, uint32_t length, void *stream,
 	MARK();
 
 	if (reading) {
-		InputStream *memoryInputStream = (InputStream *) stream;
-		terror(failIfFalse(memoryInputStream->read(data, length) == length))
+		InputStream *inputStream = (InputStream *) stream;
+		terror(failIfFalse(inputStream->read(data, length) == length))
 	} else {
-		OutputStream *memoryOutputStream = (OutputStream *) stream;
-		terror(failIfFalse(memoryOutputStream->write(data, length)))
+		OutputStream *outputStream = (OutputStream *) stream;
+		terror(failIfFalse(outputStream->write(data, length)))
 	}
 
 finish:
 	return;
 }
 
-static char *readStringFromStream(InputStream *memoryInputStream, err_t *e)
+static char *readStringFromStream(InputStream *inputStream, err_t *e)
 {
 	MARK();
 
@@ -1044,9 +1085,9 @@ static char *readStringFromStream(InputStream *memoryInputStream, err_t *e)
 	char *result = NULL;
 	char *_result = NULL;
 
-	terror(readWriteStream(&length, sizeof(length), memoryInputStream, TRUE, e))
+	terror(readWriteStream(&length, sizeof(length), inputStream, TRUE, e))
 	_result = (char *) calloc(1, (length + 1));
-	terror(readWriteStream(_result, length, memoryInputStream, TRUE, e))
+	terror(readWriteStream(_result, length, inputStream, TRUE, e))
 	_result[length] = '\0';
 
 	result = _result; _result = NULL;
@@ -1055,15 +1096,15 @@ finish:
 }
 
 static void writeStringToStream(char *string,
-  OutputStream *memoryOutputStream, err_t *e)
+  OutputStream *outputStream, err_t *e)
 {
 	MARK();
 
 	size_t length = strlen(string);
 
 	terror(readWriteStream(&length, sizeof(length),
-	  memoryOutputStream, FALSE, e))
-	terror(readWriteStream(string, length, memoryOutputStream, FALSE, e))
+	  outputStream, FALSE, e))
+	terror(readWriteStream(string, length, outputStream, FALSE, e))
 
 finish:
 	return;
@@ -1305,25 +1346,27 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 
 	void *freeMe = NULL;
 	pattern_t *p = NULL;
-	OutputStream *memoryOutputStream = NULL;
-	InputStream *memoryInputStream = NULL;
+	OutputStream *outputStream = NULL;
+	InputStream *inputStream = NULL;
 
 	if (load) {
-		memoryInputStream = (InputStream *) stream;
+		inputStream = (InputStream *) stream;
 		freeMe = p = allocatePattern(parent);
 		PARENT(p) = parent;
-		terror(NAME(p) = readStringFromStream(memoryInputStream, e))	
+		terror(NAME(p) = readStringFromStream(inputStream, e))	
 	} else {
-		memoryOutputStream = (OutputStream *) stream;
+		outputStream = (OutputStream *) stream;
 		p = *pattern;
-		terror(writeStringToStream(NAME(p), memoryOutputStream, e))
+		terror(writeStringToStream(NAME(p), outputStream, e))
 	}
 
 	terror(readWriteStream(&TYPE(p), sizeof(TYPE(p)), stream, load, e))
+
 	if (!IS_DUMMY(p)) {
 		terror(readWriteStream((void *) PTR_CHANNEL(p),
 		  sizeof(CHANNEL(p)), stream, load, e))
 	}
+
 	terror(readWriteStream((void *) &NR_USERSTEPS_PER_BAR(p),
 	  sizeof(NR_USERSTEPS_PER_BAR(p)), stream, load, e))
 	terror(readWriteStream((void *) &NR_BARS(p),
@@ -1345,6 +1388,7 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 
 	for (uint32_t i = 0; i < NR_USERSTEPS(p); i++) {
 		void *step = USERSTEP_AT(p, i);
+
 		terror(loadStoreStep(lockContext, step, p, stream, i, load, e))
 	}
 
@@ -1353,9 +1397,38 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 	if (load) {
 		*pattern = p;
 	}
+
 	freeMe = NULL;
 finish:
 	if (freeMe != NULL) {
 		freePattern((pattern_t *) freeMe);
+	}
+
+}
+
+
+void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e)
+{
+	MARK();
+
+	defineError();
+
+	gboolean locked = FALSE;
+	uint32_t locks = LOCK_DATA | LOCK_SEQUENCER;
+
+	terror(getLocks(lockContext, locks, e))
+	locked = TRUE;
+
+	terror(unsoundAllPatterns(lockContext, e))
+
+	if (patterns.root != NULL) {
+		freePattern(((pattern_t *) patterns.root));
+	}
+	patterns.root = newRoot;
+	live = (newRoot == NULL);
+
+finish:
+	if (locked) {
+		releaseLocks(lockContext, locks);
 	}
 }
