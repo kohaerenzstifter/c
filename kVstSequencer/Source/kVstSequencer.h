@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <kohaerenzstiftung.h>
 
-#if 0
+#if 1
 #define MARK() \
   do { \
     FILE *file = getOutFile(); \
@@ -38,20 +38,13 @@ typedef struct {
     gboolean initialised;
 } mutex_t;
 
-#define MUTEX_SEQUENCER 0
-#define MUTEX_DATA 1
-#define NR_MUTEXES 2
-
-#define LOCK_SEQUENCER (1 << MUTEX_SEQUENCER)
-#define LOCK_DATA (1 << MUTEX_DATA)
-
 typedef struct {
-	uint32_t mutexes[NR_MUTEXES];
+	uint32_t count;
 } lockContext_t;
 
 #define DECLARE_LOCKCONTEXT \
   static lockContext_t lockContext = { \
-	.mutexes = { 0 } \
+	.count = 0 \
   };
 
 typedef struct {
@@ -248,7 +241,7 @@ typedef struct pattern {
       ((controllerUserStep_t *) (s))->value = NULL; \
       doSetControllerStep(((p)), ((controllerUserStep_t *) (s)), (i)); \
     } else { \
-      setSlide(((p)), ((noteUserStep_t *) (s)), FALSE, (i), NULL, TRUE, NULL); \
+      setSlide(((p)), ((noteUserStep_t *) (s)), FALSE, (i), NULL, NULL); \
       unsetNoteStep((p), ((noteUserStep_t *) (s)), (i)); \
     } \
   } while (FALSE);
@@ -331,9 +324,9 @@ typedef struct pattern {
       noteUserStep_t *source = (noteUserStep_t *) (s); \
       noteUserStep_t *target = (noteUserStep_t *) (t); \
       terror(setNoteStep((p), target, source->value, \
-	    source->velocity, (i), (l), FALSE, (e))) \
+	    source->velocity, (i), (l), (e))) \
       terror(setSlide((p), target, (lst) ? FALSE : \
-        source->slide, (i), (l), FALSE, (e))) \
+        source->slide, (i), (l), (e))) \
       target->slideLocked = source->slideLocked; \
     } \
     LOCKED((t), TYPE((p))) = LOCKED((s), TYPE((p))); \
@@ -368,14 +361,12 @@ VARIABLE( \
 
 VARIABLE ( \
   struct { \
-    mutex_t value[NR_MUTEXES]; \
+    mutex_t value; \
   }, \
-  mutexes, \
+  mutex, \
   { \
     { \
-      { \
-        .initialised = FALSE \
-      } \
+      .initialised = FALSE \
     } \
   } \
 )
@@ -454,31 +445,29 @@ void setDummyStep(pattern_t *pattern, dummyUserStep_t *dummyUserStep,
   gboolean set, lockContext_t *lockContext, err_t *e);
 void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
   GSList *value, GSList *velocity, uint32_t idx, lockContext_t *lockContext,
-  gboolean live, err_t *e);
+  err_t *e);
 void setControllerStep(pattern_t *pattern,
   controllerUserStep_t *controllerUserStep, GSList *value,
   uint32_t idx, lockContext_t *lockContext, err_t *e);
 void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
   gboolean slide, uint32_t idx, lockContext_t *lockContext,
-  gboolean live, err_t *e);
+  err_t *e);
 void freePattern(pattern_t *pattern);
 pattern_t *allocatePattern(pattern_t *parent);
 noteValue_t *allocateNoteValue(void);
 controllerValue_t *allocateControllerValue(void);
 void setSteps(pattern_t *pattern);
 void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
-  lockContext_t *lockContext, gboolean live, int32_t shift, err_t *e);
+  lockContext_t *lockContext, int32_t shift, err_t *e);
 void deleteChild(pattern_t *parent, GSList *child,
   lockContext_t *lockContext, err_t *e);
 void freeValue(pattern_t *pattern, void *value);
-void getLocks(lockContext_t *lockContext, uint32_t locks, err_t *e);
-void releaseLocks(lockContext_t *lockContext, uint32_t locks);
 gboolean anyChildStepSet(pattern_t *pattern, uint32_t idx);
 void unsoundPattern(lockContext_t *lockContext, pattern_t *pattern, err_t *e);
 void unsoundAllPatterns(lockContext_t *lockContext, err_t *e);
 void *output(void *param);
 void *input(void *param);
-void allNotesOff(lockContext_t *lockContext, gboolean alreadyLocked, err_t *e);
+void allNotesOff(lockContext_t *lockContext, err_t *e);
 void test(void);
 void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
   lockContext_t *lockContext);
@@ -495,6 +484,8 @@ void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e);
 void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
   void *stream, gboolean load, pattern_t *parent, err_t *e);
 void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e);
+void lock(lockContext_t *lockContext, err_t *e);
+void unlock(lockContext_t *lockContext);
 
 #ifdef __cplusplus
 };

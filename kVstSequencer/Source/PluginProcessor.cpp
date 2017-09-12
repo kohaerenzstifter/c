@@ -225,16 +225,15 @@ static void process(
 	int32_t position = 0;
 	int32_t stepToSignal = -1;
 	uint64_t atMicrotick = 0;
-	uint32_t locks = LOCK_DATA | LOCK_SEQUENCER;
 	double millionTimesNumerator =
 	  (((double) MILLION) * ((double) currentPositionInfo->timeSigNumerator));
 
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 
 	if (!currentPositionInfo->isPlaying) {
 		if (isPlaying) {
-			terror(allNotesOff(&lockContext, TRUE, e))
+			terror(allNotesOff(&lockContext, e))
 			RESET_PATTERN();
 			guiSignalStop();
 		}
@@ -291,7 +290,7 @@ finish:
 	isPlaying = currentPositionInfo->isPlaying;
 	free(midiMessage);
 	if (locked)  {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 }
 
@@ -329,9 +328,7 @@ static void setup(err_t *e)
 {
 	MARK();
 
-	for (uint32_t i = 0; i < NR_MUTEXES; i++) {
-		terror(initialiseMutex(&(mutexes.value[i]), e))
-	}
+	terror(initialiseMutex(&(mutex.value), e))
 
 	terror(setupPatterns(e))
 
@@ -366,6 +363,7 @@ KVstSequencerAudioProcessor::KVstSequencerAudioProcessor()
 	mkfifo(errbuffer, 0666);
 	setOutput(outbuffer, errbuffer, NULL);
 #endif
+	setOutput("/tmp/kVstSequencer.out", "/tmp/kVstSequencer.err", NULL);
 
 	err_t err;
 	err_t *e = &err;
@@ -426,9 +424,7 @@ static void teardown(void)
 	teardownSynchronisation();
 	teardownPatterns();
 
-	for (uint32_t i = 0; i < NR_MUTEXES; i++) {
-		destroyMutex(&(mutexes.value[i]));
-	}
+	destroyMutex(&(mutex.value));
 }
 
 KVstSequencerAudioProcessor::~KVstSequencerAudioProcessor()
@@ -612,7 +608,6 @@ void KVstSequencerAudioProcessor::getStateInformation (MemoryBlock& destData)
 	uint32_t zero = 0;
 	gboolean locked = FALSE;
 	MemoryOutputStream *memoryOutputStream = NULL;
-	uint32_t locks = LOCK_DATA | LOCK_SEQUENCER;
 	err_t err;
 	err_t *e = &err;
 
@@ -620,7 +615,7 @@ void KVstSequencerAudioProcessor::getStateInformation (MemoryBlock& destData)
 
 	memoryOutputStream = new MemoryOutputStream(destData, FALSE);
 
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 
 	if (live) {
@@ -643,7 +638,7 @@ void KVstSequencerAudioProcessor::getStateInformation (MemoryBlock& destData)
 
 finish:
 	if (locked)  {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 	if (memoryOutputStream != NULL) {
 		delete memoryOutputStream;
@@ -664,7 +659,6 @@ void KVstSequencerAudioProcessor::setStateInformation (const void* data,
 	uint32_t length = 0;
 	gboolean locked = FALSE;
 	MemoryInputStream *memoryInputStream = NULL;
-	uint32_t locks = LOCK_DATA | LOCK_SEQUENCER;
 	pattern_t *pattern = NULL;
 	err_t err;
 	err_t *e = &err;
@@ -673,7 +667,7 @@ void KVstSequencerAudioProcessor::setStateInformation (const void* data,
 
 	memoryInputStream = new MemoryInputStream(data, sizeInBytes, FALSE);
 
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 
 	terror(failIfFalse(memoryInputStream->read(&length, sizeof(length))
@@ -710,7 +704,7 @@ void KVstSequencerAudioProcessor::setStateInformation (const void* data,
 
 finish:
 	if (locked)  {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 	if (memoryInputStream != NULL) {
 		delete memoryInputStream;

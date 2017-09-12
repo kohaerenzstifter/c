@@ -379,7 +379,7 @@ static void slide(uint32_t idx, err_t *e)
 	  (noteUserStep_t *) (USERSTEP_AT(current.pattern, idx));
 
 	terror(setSlide(current.pattern, noteUserStep,
-	  (!noteUserStep->slide), idx, &lockContext, TRUE, e))
+	  (!noteUserStep->slide), idx, &lockContext, e))
 
 finish:
 	return;
@@ -796,7 +796,6 @@ static void cbDoAddPattern(void *data)
 	err_t *e = &err;
 	pattern_t  *pattern = NULL;
 	gboolean locked = FALSE;
-	uint32_t locks = LOCK_DATA;
 	const char *name = createPattern.nameEntry->getText().toRawUTF8();
 
 	initErr(e);
@@ -811,25 +810,23 @@ static void cbDoAddPattern(void *data)
 	  createPattern.controllerSpinButton->value);
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, FALSE, 0, e))
+	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, 0, e))
 
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 
 	CHILDREN(createPattern.parent) =
 	  g_slist_append((GSList *) CHILDREN(createPattern.parent), pattern);
 
-	releaseLocks(&lockContext, locks);
+	unlock(&lockContext);
 	locked = FALSE;
 
 	render();
-
 	showDialog(getPatternListDialog);
-
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 }
 
@@ -885,7 +882,6 @@ static void cbSetupNoteValue(void *data)
 	noteValue_t *noteValue = (noteValue_t *) data;
 	int8_t octave = setupValue.note.octaveSpinButton->value;
 	gboolean sharp = FALSE;
-	uint32_t locks = (LOCK_DATA | LOCK_SEQUENCER);
 	const char *name = setupValue.nameEntry->getText().toRawUTF8();
 
 	err_t err;
@@ -903,7 +899,7 @@ static void cbSetupNoteValue(void *data)
 		}
 	}
 
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 
 	terror(unsoundPattern(&lockContext, setupValue.pattern, e))
@@ -942,9 +938,9 @@ static void cbSetupNoteValue(void *data)
 		}
 		backupVelocity = noteUserStep->velocity;
 		terror(setNoteStep(setupValue.pattern, noteUserStep, NULL,
-		  NULL, i, &lockContext, FALSE, e))
+		  NULL, i, &lockContext, e))
 		terror(setNoteStep(setupValue.pattern, noteUserStep, value,
-		  backupVelocity, i, &lockContext, FALSE, e))
+		  backupVelocity, i, &lockContext, e))
 	}
 
 	render();
@@ -952,7 +948,7 @@ static void cbSetupNoteValue(void *data)
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 }
 
@@ -962,14 +958,13 @@ static void cbTriggerControllerValue(void *data)
 
 	midiMessage_t *midiMessage = NULL;
 	gboolean locked = FALSE;
-	uint32_t locks = LOCK_SEQUENCER;
 	uint8_t intValue = setupValue.controllerOrVelocity.valueSpinButton->value;
 	err_t err;
 	err_t *e = &err;
 
 	initErr(e);
 
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 
 	midiMessage =
@@ -979,7 +974,7 @@ static void cbTriggerControllerValue(void *data)
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 }
 
@@ -991,7 +986,6 @@ static void cbSetupControllerValue(void *data)
 	GSList *velocity = NULL;
 	GSList *backupValue = NULL;
 	gboolean locked = FALSE;
-	uint32_t locks = LOCK_DATA;
 	uint32_t i = 0;
 	controllerValue_t *controllerValue = (controllerValue_t *) data;
 	const char *name = setupValue.nameEntry->getText().toRawUTF8();
@@ -1001,7 +995,7 @@ static void cbSetupControllerValue(void *data)
 
 	initErr(e);
 
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 
 	if (controllerValue == NULL) {
@@ -1040,9 +1034,9 @@ static void cbSetupControllerValue(void *data)
 			}
 			backupValue = noteUserStep->value;
 			terror(setNoteStep(setupValue.pattern, noteUserStep, NULL,
-			  NULL, i, &lockContext, FALSE, e))
+			  NULL, i, &lockContext, e))
 			terror(setNoteStep(setupValue.pattern, noteUserStep, backupValue,
-			  velocity, i, &lockContext, FALSE, e))
+			  velocity, i, &lockContext, e))
 		}
 	}
 
@@ -1056,7 +1050,7 @@ static void cbSetupControllerValue(void *data)
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 }
 
@@ -1656,7 +1650,7 @@ static void cbSlide(void *data)
 	initErr(e);
 
 	terror(setSlide(current.pattern, noteUserStep,
-	  (!noteUserStep->slide), idx, &lockContext, TRUE, e))
+	  (!noteUserStep->slide), idx, &lockContext, e))
 	render();
 
 finish:
@@ -1736,7 +1730,7 @@ static void cbNoteStep(void *data)
 	} while ((value == NULL)&&anyChildStepSet(current.pattern, idx));
 
 	terror(setNoteStep(current.pattern, noteUserStep,
-	  value, velocity, idx, &lockContext, TRUE, e))
+	  value, velocity, idx, &lockContext, e))
 	render();
 
 finish:
@@ -1909,7 +1903,7 @@ static void cbSetBars(void *data)
 
 	terror(adjustSteps(pattern,
 	  numberPicker.label->getText(FALSE).getIntValue(),
-	  NR_STEPS_PER_BAR(pattern), &lockContext, TRUE, 0, e))
+	  NR_STEPS_PER_BAR(pattern), &lockContext, 0, e))
 
 	if (current.bar >= NR_BARS(pattern)) {
 		current.bar = NR_BARS(pattern) - 1;
@@ -1932,7 +1926,7 @@ static void cbSetStepsPerBar(void *data)
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
 	  numberPicker.label->getText(FALSE).getIntValue(),
-	  &lockContext, TRUE, 0, e))
+	  &lockContext, 0, e))
 
 finish:
 	destroyDialog();
@@ -2484,7 +2478,6 @@ static void cbLoad(void *data)
 	char *path = NULL;
 	gboolean locked = FALSE;
 	pattern_t *pattern = NULL;
-	uint32_t locks = LOCK_DATA;
 	File *file = NULL;
 	FileInputStream *fileInputStream = NULL;
 
@@ -2498,7 +2491,7 @@ static void cbLoad(void *data)
 	terror(fileInputStream->openedOk())
 	terror(loadStorePattern(&lockContext, &pattern, fileInputStream, TRUE,
 	  (pattern_t *) patterns.root, e))
-	terror(getLocks(&lockContext, locks, e))
+	terror(lock(&lockContext, e))
 	locked = TRUE;
 	if ((IS_DUMMY(pattern))&&(NR_USERSTEPS(pattern) == 1)&&
 	  IS_SET(USERSTEP_AT(pattern, 0), TYPE(pattern))) {
@@ -2513,13 +2506,13 @@ static void cbLoad(void *data)
 		  g_slist_append((GSList *) patterns.root->children, pattern);
 	}
 	pattern = NULL;
-	releaseLocks(&lockContext, locks);
+	unlock(&lockContext);
 	locked = FALSE;
 	render();
 
 finish:
 	if (locked) {
-		releaseLocks(&lockContext, locks);
+		unlock(&lockContext);
 	}
 	if (pattern != NULL) {
 		freePattern(pattern);
@@ -2616,7 +2609,7 @@ static void cbChildren(void *data)
 static void shiftPattern2(pattern_t *pattern, int32_t shiftBy, err_t *e)
 {
 	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, FALSE, shiftBy, e))
+	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, shiftBy, e))
 	for (GSList *cur = (GSList *) CHILDREN(pattern); cur != NULL;
 	  cur = g_slist_next(cur)) {
 		pattern_t *child = (pattern_t *) cur->data;
