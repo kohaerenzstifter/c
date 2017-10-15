@@ -468,7 +468,7 @@ double KVstSequencerAudioProcessor::getTailLengthSeconds() const
 {
 	MARK();
 
-    return 1.0;
+    return 0;
 }
 
 int KVstSequencerAudioProcessor::getNumPrograms()

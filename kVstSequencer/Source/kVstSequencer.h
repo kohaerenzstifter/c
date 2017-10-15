@@ -305,7 +305,7 @@ typedef struct pattern {
   ((t) == patternTypeController) ? 1 : \
   SEGFAULT_NUMBER)
 #define MAX_BARS 512
-#define MAX_EVENTSTEPS_PER_BAR 512
+#define MAX_EVENTSTEPS_PER_BAR 8192
 #define MAX_STEPS_PER_BAR(p) \
   (IS_DUMMY((p)) ? (MAX_EVENTSTEPS_PER_BAR / 1) : \
   (MAX_EVENTSTEPS_PER_BAR / (EVENTSTEPS_PER_USERSTEP(TYPE((p))))))

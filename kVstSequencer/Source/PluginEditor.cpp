@@ -14,7 +14,6 @@
 
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
-#include "kVstSequencer.h"
 
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 600
@@ -48,42 +47,124 @@ typedef enum {
 typedef void (*fnButtonCallback_t)(void *data);
 typedef void (*fnPickNumber_t)(pickType_t pickType);
 
-typedef struct {
-	gboolean isContainer;
-	union {
-		Component *component;
-		Container *container;
-	};
-} element_t;
+static struct {
+	KVstSequencerAudioProcessorEditor *kVstSequencerAudioProcessorEditor;
+	CompositeComponent *compositeComponent;
+} application = {
+	.kVstSequencerAudioProcessorEditor = NULL,
+	.compositeComponent = NULL
+};
 
-static gint compareElements(gconstpointer a, gconstpointer b)
+CompositeComponent::CompositeComponent(Component *parent, gboolean vertical) :
+  Component(), vertical(vertical)
 {
 	MARK();
 
-	gint result = 0;
-	element_t *first = (element_t *) a;
-	element_t *second = (element_t *) b;
+	this->vertical = vertical;
 
-	if (first->isContainer != second->isContainer)  {
-		result = first->isContainer ? 1 : -1;
-	} else {
-		void *ptr1 = first->isContainer ?
-		  (void *) first->container : (void *) first->component;
-		void *ptr2 = first->isContainer ?
-		  (void *) second->container : (void *) second->component;
+	if (parent != NULL) {
+		parent->addAndMakeVisible(this);
+	}
+}
 
-		result = (ptr1 > ptr2) ? 1 : (ptr2 < ptr1) ? -1 : 0;
+CompositeComponent::~CompositeComponent()
+{
+	MARK();
+
+	deleteAllChildren();
+}
+
+void CompositeComponent::resized()
+{
+	MARK();
+
+	const Array<Component *> &children = this->getChildren();
+	uint32_t fraction = children.size();
+	Rectangle<int> rectangle = getLocalBounds();
+
+	for (auto* child : children) {
+		Rectangle<int> subRectangle =
+		  getSubRectangle(this->vertical, &rectangle, fraction--);
+		child->setBounds(subRectangle);
+	}
+}
+
+static struct {
+	pattern_t *pattern;
+	uint32_t bar;
+} current = {
+	.pattern = NULL,
+	.bar = 0
+};
+
+class StepsViewport : public Viewport
+{
+public:
+	StepsViewport(CompositeComponent *parent) :
+	  Viewport(), stepsComponent(NULL)  {
+		MARK();
+
+		this->setScrollBarsShown(FALSE, TRUE);
+		parent->addAndMakeVisible(this);
 	}
 
-	return result;
-}
+	virtual ~StepsViewport() override {
+		MARK();
+		//TODO
+		//delete this->stepsComponent;
+	}
+
+	void resized() override {
+		MARK();
+
+		if (this->stepsComponent == NULL) {
+			goto finish;
+		}
+
+		if (this->stepsComponent->getHeight() != this->getHeight()) {
+			this->stepsComponent->setSize(
+			  this->stepsComponent->getWidth(), this->getHeight());
+		}
+finish:
+		return;
+	}
+
+	void setStepsComponent(CompositeComponent *stepsComponent, int width) {
+		MARK();
+
+		if (this->stepsComponent != NULL) {
+			delete this->stepsComponent;
+		}
+		if (stepsComponent != NULL) {
+			stepsComponent->setSize(width, this->getHeight());
+			setViewedComponent(stepsComponent);
+		}
+		this->stepsComponent = stepsComponent;
+	}
+
+private:
+	CompositeComponent *stepsComponent;
+};
+
 
 class SimpleLabel : public Label
 {
 public:
-	SimpleLabel(void) : Label(), string(NULL) {
+	SimpleLabel(Component *parent, const char *text) : Label(), string(NULL) {
 		MARK();
+	
+		if (text != NULL) {
+			this->setText(text);
+		}
+		if (parent != NULL) {
+			parent->addAndMakeVisible(this);
+		}
+
+		Colour *colour = new Colour(0x0, 0x0, 0x0);
+
+		this->setColour(Label::backgroundColourId, *colour);
 	}
+
 	virtual ~SimpleLabel() override {
 		MARK();
 
@@ -91,11 +172,13 @@ public:
 			delete this->string;
 		}
 	}
+
 	void setText(const String &newText, NotificationType notification) {
 		MARK();
 
-		Label::setText(newText, notification);
+		this->Label::setText(newText, notification);
 	}
+
 	void setText(const char *text) {
 		MARK();
 		
@@ -138,9 +221,11 @@ static void unsignalStep()
 	if (signalling.lastLabel == NULL) {
 		goto finish;
 	}
+
 	if (signalling.generation != signalling.lastGeneration) {
 		goto finish;
 	}
+
 	signalling.lastLabel->setText("");
 
 finish:
@@ -195,14 +280,6 @@ void KVstSequencerAudioProcessorEditor::handleCommandMessage(int commandId)
 	}
 }
 
-static struct {
-	Container *container;
-	KVstSequencerAudioProcessorEditor *component;
-} application = {
-	.container = NULL,
-	.component = NULL
-};
-
 void guiSignalStep(int step)
 {
 	MARK();
@@ -211,7 +288,7 @@ void guiSignalStep(int step)
 		goto finish;
 	}
 
-	application.component->postCommandMessage(step);
+	application.kVstSequencerAudioProcessorEditor->postCommandMessage(step);
 
 finish:
 	return;
@@ -225,143 +302,13 @@ void guiSignalStop(void)
 		goto finish;
 	}
 
-	application.component->postCommandMessage(-1);
+	application.kVstSequencerAudioProcessorEditor->postCommandMessage(-1);
 
 finish:
 	return;
-}
-
-Container::Container(Component *component, gboolean vertical) : elements(NULL)
-{
-	MARK();
-
-	this->component = component;
-	this->vertical = vertical;
-}
-
-Container::~Container()
-{
-	MARK();
-
-	for (GSList *cur = this->elements; cur != NULL;
-	  cur = g_slist_next(cur)) {
-		element_t *element = (element_t *) (cur->data);
-		if (element->isContainer) {
-			delete element->container;
-		} else {
-			delete element->component;
-		}
-		free(element);
-	}
-	g_slist_free(this->elements); this->elements = NULL;
-}
-
-void Container::addElement(void *element)
-{
-	MARK();
-
-	this->elements = g_slist_append(this->elements, element);
-}
-
-void Container::addContainer(Container *container)
-{
-	MARK();
-
-	element_t *element = (element_t *) calloc(1, sizeof((*element)));
-
-	element->isContainer = TRUE;
-	element->container = container;
-
-	this->addElement(element);
-}
-
-void Container::addComponent(Component *component)
-{
-	MARK();
-
-	element_t *element = (element_t *) calloc(1, sizeof((*element)));
-
-	element->isContainer = FALSE;
-	element->component = component;
-
-	this->addElement(element);
-
-	this->component->addAndMakeVisible(component);
-}
-
-void Container::removeElement(void *element)
-{
-	MARK();
-
-	err_t err;
-	err_t *e = &err;
-
-	initErr(e);
-
-	GSList *link =
-	  g_slist_find_custom(this->elements, element, compareElements);
-	terror(failIfFalse((link != NULL)))
-	free((element_t *) link->data);
-	this->elements = g_slist_delete_link(this->elements, link);
-
-finish:
-	return;
-}
-
-void Container::removeContainer(Container *container)
-{
-	MARK();
-
-	element_t element;
-
-	element.isContainer = TRUE;
-	element.container = container;
-MARK();
-	this->removeElement(&element);
-}
-
-void Container::removeComponent(Component *component)
-{
-	MARK();
-
-	element_t element;
-
-	element.isContainer = FALSE;
-	element.component = component;
-
-	this->removeElement(&element);
-
-	this->component->removeChildComponent(component);
-}
-
-void Container::layout(Rectangle<int> rectangle)
-{
-	MARK();
-
-	GSList *cur = NULL;
-	uint32_t fraction = g_slist_length(this->elements);
-
-	for (cur = this->elements; cur != NULL; cur = g_slist_next(cur))  {
-		element_t *element = (element_t *) cur->data;
-		Rectangle<int> subRectangle =
-		  getSubRectangle(this->vertical, &rectangle, fraction--);
-
-		if (element->isContainer) {
-			element->container->layout(subRectangle);
-		} else {
-			element->component->setBounds(subRectangle);
-		}
-	}
 }
 
 static gboolean randomising = FALSE;
-static struct {
-	pattern_t *pattern;
-	uint32_t bar;
-} current = {
-	.pattern = NULL,
-	.bar = 0
-};
 
 static struct {
 	SimpleLabel *label;
@@ -388,19 +335,22 @@ finish:
 class SimpleButtonListener : public Button::Listener
 {
 public:
-	SimpleButtonListener(fnButtonCallback_t callback, void *data) :
+	SimpleButtonListener(fnButtonCallback_t callback, void *data) : 
 	  callback(callback), data(data) {
 		MARK();
 	}
+
 	virtual ~SimpleButtonListener() override {
 		MARK();
 	}
-    void buttonClicked (Button *button) override {
+
+    void buttonClicked(Button *button) override {
 		MARK();
 
 		this->callback(this->data);
 	}
-	void buttonStateChanged (Button *button) override {
+
+	void buttonStateChanged(Button *button) override {
 		MARK();
 	}
 
@@ -412,7 +362,8 @@ private:
 class SimpleButton : public TextButton
 {
 public:
-	SimpleButton(const char *text, fnButtonCallback_t callback, void *data) :
+	SimpleButton(Component *parent, const char *text,
+	  fnButtonCallback_t callback, void *data) :
 	  TextButton(text), listener(NULL) {
 		MARK();
 
@@ -420,28 +371,60 @@ public:
 			this->listener = new SimpleButtonListener(callback, data);
 			this->addListener(this->listener);
 		}
+
+		if (parent != NULL) {
+			parent->addAndMakeVisible(this);
+		}
 	}
+
 	virtual ~SimpleButton() override {
 		MARK();
 
-		if (this->listener != NULL) delete this->listener;
+		if (this->listener != NULL) {
+			delete this->listener;
+		}
 	}
+
 private:
 	SimpleButtonListener *listener;
+};
+
+class SimpleTextEditor : public TextEditor 
+{
+public:
+	SimpleTextEditor(CompositeComponent *parent) : TextEditor () {
+		MARK();
+
+		if (parent != NULL) {
+			parent->addAndMakeVisible(this);
+		}
+	}
+
+	virtual ~SimpleTextEditor() override {
+		MARK();
+	}
+
+private:
 };
 
 class SimpleToggleButton : public ToggleButton
 {
 public:
-	SimpleToggleButton(const char *text, fnButtonCallback_t callback,
-	  void *data) : ToggleButton(text), listener(NULL) {
+	SimpleToggleButton(CompositeComponent *parent, const char *text,
+	  fnButtonCallback_t callback, void *data) :
+	  ToggleButton(text), listener(NULL) {
 		MARK();
 
 		if (callback != NULL) {
 			this->listener = new SimpleButtonListener(callback, data);
 			this->addListener(this->listener);
 		}
+
+		if (parent != NULL) {
+			parent->addAndMakeVisible(this);
+		}
 	}
+
 	virtual ~SimpleToggleButton() override {
 		MARK();
 
@@ -449,21 +432,22 @@ public:
 			delete this->listener;
 		}
 	}
+
 private:
 	SimpleButtonListener *listener;
 };
 
 static char *intToString(int32_t number);
-static SimpleLabel *getLabel(Container *container, const char *text);
-static SimpleButton *getSimpleButton(Container *container, const char *text,
-  fnButtonCallback_t callback, void *data);
+static SimpleLabel *getLabel(Component *parent, const char *text);
+static SimpleButton *getSimpleButton(Component *parent,
+  const char *text, fnButtonCallback_t callback, void *data);
 static void render(void);
 static void cbDecrement(void *data);
 static void cbIncrement(void *data);
 
 #define ELEVEN (11)
 
-class SpinButton : public Container, Label::Listener
+class SpinButton : public CompositeComponent, Label::Listener
 {
 public:
 	int32_t (*more)(int32_t value);
@@ -472,19 +456,22 @@ public:
 	SimpleLabel *label;
 	int32_t value;
 
-	SpinButton(Component *component, int32_t min, int32_t max, int32_t value,
+	SpinButton(CompositeComponent *parent,
+	  int32_t min, int32_t max, int32_t value,
 	  int32_t (*more)(int32_t value) = NULL,
-	  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE)
-	  : Container(component, FALSE), min(min), max(max), value(value),
+	  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE) :
+	  CompositeComponent(parent, FALSE), min(min), max(max), value(value),
 	  enabled(TRUE), more(more), less(less) {
 		MARK();
 
 		this->downButton = getSimpleButton(this, "-", cbDecrement, this);
 		this->label = getLabel(this, intToString(this->value));
 		this->label->addListener(this);
+
 		if (editable) {
 			this->label->setEditable(TRUE, FALSE, TRUE); 
 		}
+
 		this->upButton = getSimpleButton(this, "+", cbIncrement, this);
 
 		setButtonsEnabled();
@@ -492,6 +479,7 @@ public:
     virtual ~SpinButton() override {
 		MARK();
 	}
+
 	void setValue(int32_t value, err_t *e) {
 		MARK();
 
@@ -506,12 +494,14 @@ public:
 finish:
 		return;
 	}
+
 	void setButtonsEnabled(void) {
 		MARK();
 
 		this->downButton->setEnabled(this->value > this->min);
 		this->upButton->setEnabled(this->value < this->max);
 	}
+
 	virtual void setEnabled(gboolean enabled) {
 		MARK();
 
@@ -524,6 +514,7 @@ finish:
 			this->upButton->setEnabled(FALSE);
 		}
 	}
+
 	virtual void setEnabled(void) {
 		MARK();
 
@@ -554,20 +545,23 @@ finish:
 			if (!valid){
 				break;
 			}
+
 			zeroLength = FALSE;
+
 			if (!isdigit(string[i])) {
 				valid = FALSE;
 			}
+
 			number = (number * 10) + (string[i] - '0');
 		}
 
 		if (zeroLength) {
 			valid = FALSE;
 		}
+
 		if ((number < this->min)||(number > this->max)) {
 			valid = FALSE;
 		}
-
 
 		if (valid) {
 			this->value = (string[0] == '-') ? -number : number;
@@ -576,6 +570,7 @@ finish:
 			snprintf(buffer, sizeof(buffer), "%u", this->value);
 			((SimpleLabel *) label)->setText(buffer);
 		}
+
 		this->setEnabled(this->enabled);
 		free(copy);
 	}
@@ -583,6 +578,7 @@ finish:
 	virtual void editorShown(Label *label, TextEditor &textEditor) {
 		MARK();
 	}
+
 	virtual void editorHidden(Label *label, TextEditor &textEditor) {
 		MARK();
 	}
@@ -661,40 +657,53 @@ static void cbIncrement(void *data)
 	spinButton->setValue(value, NULL);
 }
 
-static struct {
-	DialogWindow *window;
-} dialog = {
-	.window = NULL
-};
-
 class DialogComponent : public Component
 {
 public:
-	Container *container;
-	DialogComponent() : Component(), container(NULL) {
+	DialogComponent(CompositeComponent * (*fnGetDialog) (DialogComponent *)) : 
+	  Component() {
 		MARK();
+
+		this->compositeComponent = fnGetDialog(this);
 	}
+
     virtual ~DialogComponent() {
 		MARK();
 
-		if (this->container != NULL) {
-			delete this->container;
-		}
-		dialog.window = NULL;
+		delete this->compositeComponent;
+	}
+
+	void setDialogSize(int width, int height) {
+		MARK();
+
+		this->setSize(width, height);
+	}
+
+	CompositeComponent *getCompositeComponent(void) {
+		MARK();
+
+		return this->compositeComponent;
 	}
 
 private:
+	CompositeComponent *compositeComponent;
 };
 
-static void layout(Component *component, Container *container)
+static struct {
+	DialogWindow *window;
+	DialogComponent *dialogComponent;
+} dialog = {
+	.window = NULL,
+	.dialogComponent = NULL
+};
+
+static void layout(Component *parent, Component *laymeOut)
 {
 	MARK();
 
-	Rectangle<int> rectangle = component->getLocalBounds();
+	Rectangle<int> rectangle = parent->getLocalBounds();
 
-	if (container != NULL) {
-		container->layout(rectangle);
-	}
+	laymeOut->setSize(rectangle.getWidth(), rectangle.getHeight());
 }
 
 static void destroyDialog(void)
@@ -702,7 +711,7 @@ static void destroyDialog(void)
 	MARK();
 
 	if (dialog.window != NULL) {
-		delete dialog.window;
+		dialog.window->exitModalState(0);
 		dialog.window = NULL;
 	}
 }
@@ -712,49 +721,46 @@ static struct {
 	pattern_t *hideMe;
 } patternList;
 
-static Container *getPatternListDialog(Component *component);
-static void showDialog(Container * (*fnGetDialog)(Component *));
+static CompositeComponent *getPatternListDialog(
+  DialogComponent *dialogComponent);
+static void showDialog(CompositeComponent *(*fnGetDialog) (DialogComponent *));
 
-static SimpleToggleButton *getSimpleToggleButton(Container *container,
-  const char *text, int groupId, fnButtonCallback_t callback, void *data)
+static SimpleToggleButton *getSimpleToggleButton(CompositeComponent *parent, const char *text, int groupId, fnButtonCallback_t callback, void *data)
 {
 	MARK();
 
-	SimpleToggleButton *result = new SimpleToggleButton(text, callback, data);
+	SimpleToggleButton *result =
+	  new SimpleToggleButton(parent, text, callback, data);
 
 	if (groupId >= 0) {
 		result->setRadioGroupId(groupId, sendNotificationSync);
 	}
 
-	container->addComponent(result);
-
 	return result;
 }
 
-static Container *getBoxWithLabel(Component *component, Container *container,
+static CompositeComponent *getBoxWithLabel(Component *parent,
   gboolean vertical, const char *labelText);
 
-static TextEditor *getTextEditor(Container *container)
+static SimpleTextEditor *getTextEditor(CompositeComponent *parent)
 {
+	//TODO: remove this delegate function
+
 	MARK();
 
-	TextEditor *result = new TextEditor();
-
-	container->addComponent(result);
+	SimpleTextEditor *result = new SimpleTextEditor(parent);
 
 	return result;
 }
 
-static SpinButton *getSpinButton(Component *component, Container *container,
-  int32_t min, int32_t max, int value, int32_t (*more)(int32_t value) = NULL,
+static SpinButton *getSpinButton(CompositeComponent *parent, int32_t min,    
+  int32_t max, int value, int32_t (*more)(int32_t value) = NULL,
   int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE)
 {
 	MARK();
 
 	SpinButton *result =
-	  new SpinButton(component, min, max, value, more, less, editable);
-
-	container->addContainer(result);
+	  new SpinButton(parent, min, max, value, more, less, editable);
 
 	return result;
 }
@@ -804,9 +810,8 @@ static void cbDoAddPattern(void *data)
 		name = intToString(createPattern.nextPattern++);
 	}
 
-	pattern = creatPattern(createPattern.parent, name,
-	  createPattern.patternType,
-	  createPattern.channelSpinButton->value,
+	pattern = creatPattern(createPattern.parent, name,  
+	  createPattern.patternType,  createPattern.channelSpinButton->value,
 	  createPattern.controllerSpinButton->value);
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
@@ -834,8 +839,8 @@ static void setChannelEnabled(void)
 {
 	MARK();
 
-	createPattern.channelSpinButton->setEnabled
-	  (!(createPattern.patternType == patternTypeDummy));
+	createPattern.channelSpinButton->setEnabled(
+	  !(createPattern.patternType == patternTypeDummy));
 }
 
 static void setControllerEnabled(void)
@@ -865,8 +870,9 @@ static void cbSelectTone(void *data)
 	setupValue.note.sharpCheckButton->setEnabled(notes[idx].sharpable);
 }
 
-static Container *getValuesDialog(Component *component);
-static Container *getVelocitiesDialog(Component *component);
+static CompositeComponent *getValuesDialog(DialogComponent *dialogComponent);
+static CompositeComponent *getVelocitiesDialog(
+  DialogComponent *dialogComponent);
 
 static void cbSetupNoteValue(void *data)
 {
@@ -892,9 +898,11 @@ static void cbSetupNoteValue(void *data)
 	for (uint32_t i = 0; i < ARRAY_SIZE(notes); i++) {
 		if (setupValue.note.noteRadios[i]->getToggleState()) {
 			note = notes[i].name;
+
 			if (notes[i].sharpable) {
 				sharp = setupValue.note.sharpCheckButton->getToggleState();
 			}
+
 			break;
 		}
 	}
@@ -936,6 +944,7 @@ static void cbSetupNoteValue(void *data)
 		if (noteUserStep->value != value) {
 			continue;
 		}
+
 		backupVelocity = noteUserStep->velocity;
 		terror(setNoteStep(setupValue.pattern, noteUserStep, NULL,
 		  NULL, i, &lockContext, e))
@@ -1133,9 +1142,8 @@ static void cbRandomNoteValue(void *data)
 		sharp = ((rand() % 2) == 0);
 	}
 
-	setupValue.note.noteRadios[rnd]->setToggleState(TRUE,
-	  sendNotificationSync);
-	setupValue.note.sharpCheckButton->setToggleState(sharp,
+	setupValue.note.noteRadios[rnd]->setToggleState(TRUE, sendNotificationSync);
+	setupValue.note.sharpCheckButton->setToggleState(sharp, 
 	  sendNotificationSync);
 
 finish:
@@ -1151,42 +1159,43 @@ static void cbRandomControllerValue(void *data)
 
 	initErr(e);
 
-	terror(setupValue.controllerOrVelocity.valueSpinButton->setValue((rand()
-	  % 128), e))
+	terror(setupValue.controllerOrVelocity.valueSpinButton->setValue(
+	  (rand() % 128), e))
 
 finish:
 	return;
 }
 
-static Container *getSetupControllerValueDialog(Component *component,
+static CompositeComponent *getSetupControllerValueDialog(
+  DialogComponent *dialogComponent,
   controllerValue_t *controllerValue)
 {
 	MARK();
 
-	Container *box = NULL;
+	CompositeComponent *box = NULL;
 	SimpleButton *button = NULL;
-	TextEditor *nameEntry = NULL;
+	SimpleTextEditor *nameEntry = NULL;
 	SpinButton *valueSpinButton = NULL;
 	const char *name = (controllerValue == NULL) ? "" :
 	  ((char *) controllerValue->name);
 	uint32_t curValue = (controllerValue == NULL) ? 0 : controllerValue->value;
-	Container *result = new Container(component, TRUE);
+	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 	SimpleButton *randomButton = NULL;
 
-	box = getBoxWithLabel(component, result, TRUE, "name:");
+	box = getBoxWithLabel(result, TRUE, "name:");
 	nameEntry = getTextEditor(box);
 	nameEntry->setText(name);
 
-	box = getBoxWithLabel(component, result, TRUE,
-	  (IS_NOTE(current.pattern)) ?
+	box = getBoxWithLabel(result, TRUE, (IS_NOTE(current.pattern)) ?
 	  "velocity value:" : "controller value");
 
-	valueSpinButton = getSpinButton(component, box, 0, 127, curValue);
+	valueSpinButton = getSpinButton(box, 0, 127, curValue);
 
 	if (!IS_NOTE(current.pattern)) {
 		button =
 		  getSimpleButton(result, "Trigger", cbTriggerControllerValue, NULL);
 	}
+
 	randomButton =
 	  getSimpleButton(result, "Random", cbRandomControllerValue, NULL);
 	button =
@@ -1195,7 +1204,7 @@ static Container *getSetupControllerValueDialog(Component *component,
 	setupValue.nameEntry = nameEntry;
 	setupValue.controllerOrVelocity.valueSpinButton = valueSpinButton;
 
-	component->setSize(400, 300);
+	dialogComponent->setDialogSize(400, 300);
 
 	return result;
 }
@@ -1259,16 +1268,16 @@ static int32_t cbDecrementByTwo(int32_t value)
 	return result;
 }
 
-static Container *getSetupNoteValueDialog(Component *component,
-  noteValue_t *noteValue)
+static CompositeComponent *getSetupNoteValueDialog(
+  DialogComponent *dialogComponent, noteValue_t *noteValue)
 {
 	MARK();
 
 	uint8_t activeIdx = 0;
-	Container *box = NULL;
+	CompositeComponent *box = NULL;
 	SimpleButton *button = NULL;
 	SimpleButton *randomButton = NULL;
-	TextEditor *nameEntry = NULL;
+	SimpleTextEditor *nameEntry = NULL;
 	SimpleToggleButton *sharpCheckButton = NULL;
 	SimpleToggleButton *lockToneCheckButton = NULL;
 	SpinButton *octaveRandRangeSpinButton = NULL;
@@ -1279,12 +1288,13 @@ static Container *getSetupNoteValueDialog(Component *component,
 	gboolean sharp = (noteValue == NULL) ? FALSE : noteValue->sharp;
 	const char *name = (noteValue == NULL) ? "" : (char *) noteValue->name;
 	char note = (noteValue == NULL) ? notes[0].name : noteValue->note;
-	Container *result = new Container(component, TRUE);
+	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 
-	box = getBoxWithLabel(component, result, TRUE, "name:");
+	box = getBoxWithLabel(result, TRUE, "name:");
 	nameEntry = getTextEditor(box);
 	nameEntry->setText(name);
-	box = getBoxWithLabel(component, result, FALSE, "note:");
+	box = getBoxWithLabel(result, FALSE, "note:");
+
 	for (uint32_t i = 0; i < ARRAY_SIZE(noteRadios); i++) {
 		noteRadios[i] =
 		  getSimpleToggleButton(box, charToString(NOTE2CHAR(notes[i].name)),
@@ -1301,12 +1311,12 @@ static Container *getSetupNoteValueDialog(Component *component,
 	  getSimpleToggleButton(result, "Don't Randomise", -1, NULL, NULL);
 	lockToneCheckButton->setToggleState(FALSE, sendNotificationSync);
 
-	box = getBoxWithLabel(component, result, TRUE, "octave:");
-	octaveSpinButton = getSpinButton(component, box, -128, 127, octave,
+	box = getBoxWithLabel(result, TRUE, "octave:");
+	octaveSpinButton = getSpinButton(box, -128, 127, octave,
 	  cbIncrementOctave, cbDecrementOctave, FALSE);
 
-	box = getBoxWithLabel(component, result, TRUE, "Octave Random Range");
-	octaveRandRangeSpinButton = getSpinButton(component, box, 1, 255, 3,
+	box = getBoxWithLabel(result, TRUE, "Octave Random Range");
+	octaveRandRangeSpinButton = getSpinButton(box, 1, 255, 3,
 	  cbIncrementByTwo, cbDecrementByTwo, FALSE);
 
 	randomDescriptionLabel = getLabel(box, NULL);
@@ -1327,43 +1337,43 @@ static Container *getSetupNoteValueDialog(Component *component,
 
 	noteRadios[activeIdx]->setToggleState(TRUE, sendNotificationSync);
 
-	component->setSize(400, 300);
+	dialogComponent->setDialogSize(400, 300);
 
 	return result;
 }
 
-static Container *getSetupPatternDialog(Component *component)
+static CompositeComponent *getSetupPatternDialog(
+  DialogComponent*dialogComponent)
 {
 	MARK();
 
 	SimpleToggleButton *dummyRadio = NULL;
 	SimpleToggleButton *noteRadio = NULL;
 	SimpleToggleButton *controllerRadio = NULL;
-	TextEditor *nameEntry = NULL;
+	SimpleTextEditor *nameEntry = NULL;
 	SpinButton *channelSpinButton = NULL;
 	SpinButton *controllerSpinButton = NULL;
 	TextButton *button = NULL;
-	Container *result = new Container(component, TRUE);
-	Container *box  = new Container(component, FALSE);
+	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
+	CompositeComponent *box  = new CompositeComponent(result, FALSE);
 
-	result->addContainer(box);
-	dummyRadio = getSimpleToggleButton(box, "DUMMY", 42,
-	  cbSelectPatternType, GUINT_TO_POINTER(patternTypeDummy));
+	dummyRadio = getSimpleToggleButton(box, "DUMMY", 42, cbSelectPatternType, 
+	  GUINT_TO_POINTER(patternTypeDummy));
 
-	noteRadio = getSimpleToggleButton(box, "NOTE", 42,
-	  cbSelectPatternType, GUINT_TO_POINTER(patternTypeNote));
+	noteRadio = getSimpleToggleButton(box, "NOTE", 42, cbSelectPatternType, 
+	  GUINT_TO_POINTER(patternTypeNote));
 
 	controllerRadio = getSimpleToggleButton(box, "CONTROLLER", 42,
 	  cbSelectPatternType, GUINT_TO_POINTER(patternTypeController));
 
-	box = getBoxWithLabel(component, result, TRUE, "name:");
+	box = getBoxWithLabel(result, TRUE, "name:");
 	nameEntry = getTextEditor(box);
 
-	box = getBoxWithLabel(component, result, TRUE, "channel:");
+	box = getBoxWithLabel(result, TRUE, "channel:");
 
-	channelSpinButton = getSpinButton(component, box, 1, 16, 1);
-	box = getBoxWithLabel(component, result, TRUE, "controller:");
-	controllerSpinButton =  getSpinButton(component, box, 1, 127, 1);
+	channelSpinButton = getSpinButton(box, 1, 16, 1);
+	box = getBoxWithLabel(result, TRUE, "controller:");
+	controllerSpinButton =  getSpinButton(box, 1, 127, 1);
 
 	button = getSimpleButton(result, "OK", cbDoAddPattern, NULL);
 
@@ -1377,31 +1387,30 @@ static Container *getSetupPatternDialog(Component *component)
 
 	createPattern.dummyRadio->setToggleState(TRUE, sendNotificationSync);
 
-	component->setSize(400, 300);
+	dialogComponent->setDialogSize(400, 300);
 
 	return result;
 }
 
-static Container *getSetupValueDialog(Component *component)
+static CompositeComponent *getSetupValueDialog(
+  DialogComponent *dialogComponent)
 {
 	MARK();
 
-	Container *result = NULL;
+	CompositeComponent *result = NULL;
 
-	
 	if (setupValue.noteSetup) {
-		result = getSetupNoteValueDialog(component,
+		result = getSetupNoteValueDialog(dialogComponent,
 		  ((noteValue_t *) setupValue.value));
 	} else {
-		result = getSetupControllerValueDialog(component,
+		result = getSetupControllerValueDialog(dialogComponent,
 		  ((controllerValue_t *) setupValue.value));
 	}
 
 	return result;
 }
 
-static Container *stepsBox = NULL;
-static Container *stepsView = NULL;
+static StepsViewport *stepsViewport = NULL;
 static SimpleButton *parentOrModeButton = NULL;
 static SimpleButton *topOrAssignOrEditButton = NULL;
 static SimpleButton *promoteButton = NULL;
@@ -1422,7 +1431,8 @@ static SimpleButton *shiftRightButton = NULL;
 
 static void setTexts(void)
 {
-	
+	MARK();
+
 	if (live) {
 		topOrAssignOrEditButton->setButtonText("Go Unlive and Edit ...");
 	} else {
@@ -1478,26 +1488,28 @@ finish:
 	return;
 }
 
-static Container *getBox(Component *component, gboolean vertical)
+static CompositeComponent *getBox(Component *parent,
+  gboolean vertical)
 {
+	//TODO: remove this delegate function
 	MARK();
 
-	return new Container(component, vertical);
+	CompositeComponent *result = new CompositeComponent(parent, vertical);
+
+	return result;
 }
 
-static Container *getBoxWithLabel(Component *component, Container *container,
+static CompositeComponent *getBoxWithLabel(Component *parent,
   gboolean vertical, const char *labelText)
 {
 	MARK();
 
 	SimpleLabel *label = NULL;
-	Container *result = getBox(component, vertical);
+	CompositeComponent *result = getBox(parent, vertical);
 
 	if (labelText != NULL) {
 		label = getLabel(result, labelText);
 	}
-	
-	container->addContainer(result);
 
 	return result;
 }
@@ -1519,14 +1531,15 @@ static void doSetColor(SimpleLabel *label, guint16 color)
 
 	uint8_t intensity = ((color * 0xff) / 0xffff);
 
-	Colour *colour = new Colour(intensity, intensity, 0xff);
+	Colour *colour = new Colour(0x0, 0x0, intensity);
 
 	label->setColour(Label::backgroundColourId, *colour);
+
 	delete colour;
 }
 
-static void setColor(SimpleLabel *label, uint32_t i,
-  uint32_t shadesSize, guint16 *shades)
+static void setColor(SimpleLabel *label, uint32_t i, uint32_t shadesSize,
+  guint16 *shades)
 {
 	MARK();
 
@@ -1536,7 +1549,9 @@ static void setColor(SimpleLabel *label, uint32_t i,
 	if (NR_USERSTEPS_PER_BAR(current.pattern) <= 4) {
 		goto haveIndex;
 	}
+
 	index = 0;
+
 	while ((index < maxIndex)&&((i % 2) == 0)) {
 		index++;
 		i /= 2;
@@ -1546,7 +1561,7 @@ haveIndex:
 	doSetColor(label, shades[index]);
 }
 
-static void addStepLabels(Container *container, uint32_t idx,
+static void addStepLabels(CompositeComponent *container, uint32_t idx,
   guint16 *shades, uint32_t shadesSize)
 {
 	MARK();
@@ -1582,7 +1597,7 @@ static void cbLockUserStep(void *data)
 	render();
 }
 
-static void addLockButton(Container *container, gboolean locked,
+static void addLockButton(CompositeComponent *container, gboolean locked,
   gboolean enabled, uint32_t idx, gboolean slide)
 {
 	MARK();
@@ -1595,7 +1610,7 @@ static void addLockButton(Container *container, gboolean locked,
 	button->setEnabled(enabled);
 }
 
-static void renderUserStep(Container *container, pattern_t *pattern,
+static void renderUserStep(CompositeComponent *container, pattern_t *pattern,
   uint32_t idx, fnButtonCallback_t cb, guint16 *shades, uint32_t shadesSize)
 {
 	MARK();
@@ -1631,8 +1646,10 @@ static void renderUserStep(Container *container, pattern_t *pattern,
 		value = 255 - value;
 		colour = new Colour(value, value, 0xff);
 		button->setColour(TextButton::buttonColourId, *colour);
+
 		delete colour;
 	}
+
 	enabled = ((nrValues > 0)&&(!locked));
 	button->setEnabled(enabled);
 }
@@ -1657,7 +1674,7 @@ finish:
 	return;
 }
 
-static void renderSlide(Container *container, pattern_t *pattern,
+static void renderSlide(CompositeComponent *container, pattern_t *pattern,
   uint32_t idx)
 {
 	MARK();
@@ -1677,8 +1694,8 @@ static void renderSlide(Container *container, pattern_t *pattern,
 	button = getSimpleButton(container, text, cbSlide, GUINT_TO_POINTER(idx));
 	button->setEnabled(enabled);
 
-	addLockButton(container, step->slideLocked,
-	  IS_SET(step, TYPE(pattern)), idx, TRUE);
+	addLockButton(container, step->slideLocked, IS_SET(step,
+	  TYPE(pattern)), idx, TRUE);
 }
 
 static void cbDummyStep(void *data)
@@ -1765,7 +1782,8 @@ finish:
 	return;
 }
 
-static void renderSteps(pattern_t *pattern, uint32_t bar)
+static void renderSteps(pattern_t *pattern, uint32_t bar, 
+  CompositeComponent *stepsComponent)
 {
 	MARK();
 
@@ -1785,9 +1803,11 @@ static void renderSteps(pattern_t *pattern, uint32_t bar)
 			shadesSize = 2;
 		}
 	}
+
 	shadeStep = (shadesSize < 2) ? 0x10000 : (0x10000 / (shadesSize - 1));
 	shades = (guint16 *) calloc(shadesSize, sizeof(guint16));
 	value = 0;
+
 	for (int i = (shadesSize - 1); i >= 0; i--) {
 		shades[i] = value;
 		value += shadeStep;
@@ -1795,20 +1815,18 @@ static void renderSteps(pattern_t *pattern, uint32_t bar)
 			value = 0xffff;
 		}
 	}
-
-	stepsView = getBox(application.component, FALSE);
-	stepsBox->addContainer(stepsView);
 	
 	for (uint32_t i = start; i < end; i++) {
-		Container *buttonBox = getBox(application.component, TRUE);
-		stepsView->addContainer(buttonBox);
+        CompositeComponent *buttonComponent =
+          new CompositeComponent(stepsComponent, TRUE);
 
-		renderUserStep(buttonBox, pattern, i, callback, shades, shadesSize);
+		renderUserStep(buttonComponent,
+		  pattern, i, callback, shades,  shadesSize);
 		if (!IS_NOTE(pattern)) {
 			continue;
 		}
 
-		renderSlide(buttonBox, pattern, i);
+		renderSlide(buttonComponent, pattern, i);
 	}
 
 	free(shades);
@@ -1824,12 +1842,8 @@ static void render(void)
 	MARK();
 
 	gboolean locked = FALSE;
-	uint32_t width = live? WINDOW_WIDTH :
-	  (WINDOW_WIDTH / (NR_USERSTEPS_PER_BAR(current.pattern))) <
-	  (width = (WINDOW_WIDTH / 16)) ?
-	  (width * NR_USERSTEPS_PER_BAR(current.pattern)) : WINDOW_WIDTH;
-
-	application.component->setSize(width, WINDOW_HEIGHT);
+	CompositeComponent *stepsComponent = NULL;
+	uint32_t width;
 
 	setTexts();
 
@@ -1851,11 +1865,11 @@ static void render(void)
 	shiftRightButton->setEnabled(FALSE);
 	randomiseSpinButton->setEnabled(live ? FALSE : TRUE);
 
-	if (stepsView !=  NULL) {
-		stepsBox->removeContainer(stepsView);
-		delete stepsView; stepsView = NULL;
-	}
+	stepsViewport->setStepsComponent(NULL, 0);
+
 	g_slist_free(signalling.labels); signalling.labels = NULL;
+	signalling.lastLabel = NULL;
+
 	if (live) {
 		goto finish;
 	}
@@ -1873,20 +1887,30 @@ static void render(void)
 	}
 
 	enableButtons();
-	renderSteps(current.pattern, current.bar);
+
+	stepsComponent = new CompositeComponent(NULL, FALSE);
+
+	renderSteps(current.pattern, current.bar, stepsComponent);
+
+	width =
+	  (WINDOW_WIDTH / (NR_USERSTEPS_PER_BAR(current.pattern))) <
+	  (width = (WINDOW_WIDTH / 16)) ?
+	  (width * NR_USERSTEPS_PER_BAR(current.pattern)) : WINDOW_WIDTH;
+
+	stepsViewport->setStepsComponent(stepsComponent, width);
+
 finish:
 	signalling.generation++;
-	layout(application.component, application.container);
+	layout(application.kVstSequencerAudioProcessorEditor,
+	  application.compositeComponent);
 }
 
-static SimpleButton *getSimpleButton(Container *container, const char *text,
-  fnButtonCallback_t callback, void *data)
+static SimpleButton *getSimpleButton(Component *parent,
+  const char *text, fnButtonCallback_t callback, void *data)
 {
 	MARK();
 
-	SimpleButton *result = new SimpleButton(text, callback, data);
-
-	container->addComponent(result);
+	SimpleButton *result = new SimpleButton(parent, text, callback, data);
 
 	return result;
 }
@@ -1925,8 +1949,7 @@ static void cbSetStepsPerBar(void *data)
 	initErr(e);
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  numberPicker.label->getText(FALSE).getIntValue(),
-	  &lockContext, 0, e))
+	  numberPicker.label->getText(FALSE).getIntValue(), &lockContext, 0, e))
 
 finish:
 	destroyDialog();
@@ -1998,7 +2021,7 @@ static void cbPickLess(void *data)
 	numberPicker.fnPickNumber(pickTypeLess);
 }
 
-static Container *getNumberPickerBox(Component *component,
+static CompositeComponent *getNumberPickerBox(CompositeComponent *parent,   
   fnPickNumber_t fnPickNumber, int value, void *ptr)
 {
 	MARK();
@@ -2006,7 +2029,7 @@ static Container *getNumberPickerBox(Component *component,
 	SimpleLabel *label = NULL;
 	TextButton *upButton = NULL;
 	TextButton *downButton = NULL;
-	Container *result = getBox(component, FALSE);
+	CompositeComponent *result = getBox(parent, FALSE);
 	
 	downButton = getSimpleButton(result, "-", cbPickLess, NULL);
 
@@ -2023,22 +2046,23 @@ static Container *getNumberPickerBox(Component *component,
 	return result;
 }
 
-static Container *getNumberPickerDialog(Component *component,
-  fnPickNumber_t fnPickNumber, fnButtonCallback_t onOk, int initial, void *ptr)
+static CompositeComponent *getNumberPickerDialog(
+  DialogComponent *dialogComponent, fnPickNumber_t fnPickNumber,
+  fnButtonCallback_t onOk, int initial, void *ptr)
 {
 	MARK();
 
-	Container *result = new Container(component, TRUE);
-	Container *box = NULL;
+	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
+	CompositeComponent *box = NULL;
 	TextButton *okButton = NULL;
 
-	box = getNumberPickerBox(component, fnPickNumber, initial, ptr);
-	result->addContainer(box);
+	box = getNumberPickerBox(result, fnPickNumber, initial, ptr);
+
 	numberPicker.fnPickNumber(pickTypeDummy);
 
 	okButton = getSimpleButton(result, "OK", onOk, NULL);
 
-	component->setSize(200, 150);
+	dialogComponent->setDialogSize(200, 150);
 
 	return result;
 }
@@ -2129,7 +2153,7 @@ static void cbDeleteVelocity(void *data)
 
 	freeControllerValue(((controllerValue_t *) link->data));
 
-	VELOCITIES(current.pattern) =
+	VELOCITIES(current.pattern) = 
 	  g_slist_delete_link(VELOCITIES(current.pattern), link);
 
 	render();
@@ -2168,20 +2192,20 @@ static gboolean isVelocityInUse(pattern_t *pattern, GSList *value)
 	return result;
 }
 
-static Container *getValuesVelocitiesDialog(Component *component,
-  gboolean velocities)
+static CompositeComponent *getValuesVelocitiesDialog(
+  DialogComponent *dialogComponent, gboolean velocities)
 {
 	MARK();
 
 	GSList *cur = NULL;
-	Container *box = NULL;
+	CompositeComponent *box = NULL;
 	TextButton *button = NULL;
-	Container *result = new Container(component, TRUE);
+	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 
 	for (cur = velocities ? VELOCITIES(current.pattern) :
 	  VALUES(current.pattern); cur != NULL; cur = g_slist_next(cur)) {
 		void *value = cur->data;
-		box = getBoxWithLabel(component, result, FALSE,
+		box = getBoxWithLabel(result, FALSE,
 		  velocities ? (char *) VELOCITY_NAME(value, TYPE(current.pattern)) :
 		  (char *) VALUE_NAME(value, TYPE(current.pattern)));
 		button = getSimpleButton(box, "Edit", velocities ?
@@ -2196,23 +2220,24 @@ static Container *getValuesVelocitiesDialog(Component *component,
 	button = getSimpleButton(result, "Add",
 	  velocities ? cbSetupVelocity : cbSetupValue, NULL);
 
-	component->setSize(400, 300);
+	dialogComponent->setDialogSize(400, 300);
 
 	return result;
 }
 
-static Container *getValuesDialog(Component *component)
+static CompositeComponent *getValuesDialog(DialogComponent *dialogComponent)
 {
 	MARK();
 
-	return getValuesVelocitiesDialog(component, FALSE);
+	return getValuesVelocitiesDialog(dialogComponent, FALSE);
 }
 
-static Container *getVelocitiesDialog(Component *component)
+static CompositeComponent *getVelocitiesDialog(
+  DialogComponent *dialogComponent)
 {
 	MARK();
 
-	return getValuesVelocitiesDialog(component, TRUE);
+	return getValuesVelocitiesDialog(dialogComponent, TRUE);
 }
 
 static pattern_t *clonePattern(pattern_t *cloneMe)
@@ -2256,6 +2281,7 @@ static void cbAssignToBank(void *data)
 	if (((pattern_t *) banks[idx]) != NULL) {
 		freePattern(((pattern_t *) banks[idx]));
 	}
+
 	banks[idx] = clonePattern(current.pattern);
 	destroyDialog();
 	render();
@@ -2282,18 +2308,19 @@ finish:
 	return;
 }
 
-static void addBank(Component *component, Container *container,
+static void addBank(CompositeComponent *compositeComponent,
   uint32_t idx, char *label)
 {
 	MARK();
 
-	getSimpleButton(getBoxWithLabel(component, container, FALSE, label),
-	  live ? "Edit" : (banks[idx] == NULL) ? "Place" : "Replace",
-	  live ?  cbEditFromBank : cbAssignToBank,
-	  GUINT_TO_POINTER(idx))->setEnabled(live ? (banks[idx] != NULL) : TRUE);
+	getSimpleButton(getBoxWithLabel(
+	  compositeComponent, FALSE, label), live ? "Edit" :
+	  (banks[idx] == NULL) ? "Place" : "Replace", live ?
+	  cbEditFromBank : cbAssignToBank, GUINT_TO_POINTER(idx))->setEnabled(live ? (banks[idx] != NULL) : TRUE);
 }
 
-static Container *getBanksDialog(Component *component)
+static CompositeComponent *getBanksDialog(
+  DialogComponent *dialogComponent)
 {
 	MARK();
 
@@ -2301,19 +2328,21 @@ static Container *getBanksDialog(Component *component)
 	uint32_t i = 0;
 	uint32_t idx = 0;
 	uint32_t octave = 0;
-	Container *result = new Container(component, TRUE);
+	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 
 	while (i < NR_BANKS) {
 		snprintf(label, sizeof(label), "%c%u",
 		  NOTE2CHAR(notes[idx].name), octave);
-		addBank(component, result, i, label);
+		addBank(result, i, label);
+
 		if (!notes[idx].sharpable) {
 			goto carryOn;
 		}
+
 		i++;
 		snprintf(label, sizeof(label), "%c#%u",
 		  NOTE2CHAR(notes[idx].name), octave);
-		addBank(component, result, i, label);
+		addBank(result, i, label);
 carryOn:
 		i++;
 		idx++;
@@ -2323,18 +2352,19 @@ carryOn:
 		}
 	}
 
-	component->setSize(400, 300);
+	dialogComponent->setDialogSize(400, 300);
 
 	return result;
 }
 
-static Container *getPatternListDialog(Component *component)
+static CompositeComponent *getPatternListDialog(
+  DialogComponent *dialogComponent)
 {
 	MARK();
 
 	TextButton *button = NULL;
-	Container *box = NULL;
-	Container *result = new Container(component, TRUE);
+	CompositeComponent *box = NULL;
+	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 
 	for (GSList *cur = (GSList *) CHILDREN(patternList.parent); cur != NULL;
 	  cur = g_slist_next(cur)) {
@@ -2344,46 +2374,40 @@ static Container *getPatternListDialog(Component *component)
 			continue;
 		}
 
-		box = getBoxWithLabel(component, result, FALSE, NAME(pattern));
+		box = getBoxWithLabel(result, FALSE, NAME(pattern));
 		button = getSimpleButton(box, "Enter", cbEnterPattern, pattern);
 		button = getSimpleButton(box, "Delete", cbDeletePattern, cur);
 		button->setEnabled((CHILDREN(pattern) == NULL));
-
 	}
 
 	button = getSimpleButton(result, "Add", cbAddPattern, NULL);
 
-	component->setSize(400, 300);
+	dialogComponent->setDialogSize(400, 300);
 
 	return result;
 }
 
-static Container *getBarsDialog(Component *component)
+static CompositeComponent *getBarsDialog(DialogComponent *dialogComponent)
 {
 	MARK();
 
-	Container *result = getNumberPickerDialog(component, cbPickBars, cbSetBars,
-	  NR_BARS(current.pattern), current.pattern);
+	CompositeComponent *result =
+	  getNumberPickerDialog(dialogComponent, cbPickBars,
+	  cbSetBars, NR_BARS(current.pattern), current.pattern);
 
 	return result;
 }
 
-static Container *getStepsPerBarDialog(Component *component)
+static CompositeComponent *getStepsPerBarDialog(
+  DialogComponent *dialogComponent)
 {
 	MARK();
 
-	Container *result =
-	  getNumberPickerDialog(component, cbPickStepsPerBar, cbSetStepsPerBar,
-	  NR_STEPS_PER_BAR(current.pattern), current.pattern);
+	CompositeComponent *result =
+	  getNumberPickerDialog(dialogComponent, cbPickStepsPerBar,
+	  cbSetStepsPerBar,  NR_STEPS_PER_BAR(current.pattern), current.pattern);
 
 	return result;
-}
-
-static void deleteContainer(Container *container)
-{
-	MARK();
-
-	delete container;
 }
 
 static void liveMode(void)
@@ -2447,6 +2471,7 @@ static char *getPath(gboolean load, err_t *e)
 	const char *string = NULL;
 	char *result = NULL;
 	bool success = FALSE;
+
 	FileChooser fileChooser("Select path ...",
 	  File::getSpecialLocation (File::userHomeDirectory),
 	  FILE_PATTERN);
@@ -2498,6 +2523,7 @@ static void cbLoad(void *data)
 		for (GSList *cur = ((GSList *) CHILDREN(pattern)); cur != NULL;
 		  cur = g_slist_next(cur)) {
 			pattern_t *child = (pattern_t *) cur->data;
+
 			patterns.root->children =
 			  g_slist_append((GSList *) patterns.root->children, child);
 		}
@@ -2525,8 +2551,9 @@ finish:
 	}
 	free(path);
 	if (hasFailed(e)) {
-		NativeMessageBox::showMessageBox(AlertWindow::WarningIcon, "Error",
-		  err2string(e), application.component);
+		NativeMessageBox::showMessageBox(AlertWindow::WarningIcon,
+		  "Error", err2string(e),
+		  application.kVstSequencerAudioProcessorEditor);
 	}
 }
 
@@ -2570,8 +2597,9 @@ finish:
 	}
 	free(path);
 	if (hasFailed(e)) {
-		NativeMessageBox::showMessageBox(AlertWindow::WarningIcon, "Error",
-		  err2string(e), application.component);
+		NativeMessageBox::showMessageBox(AlertWindow::WarningIcon, 
+		  "Error", err2string(e), 
+		  application.kVstSequencerAudioProcessorEditor);
 	}
 }
 
@@ -2610,6 +2638,7 @@ static void shiftPattern2(pattern_t *pattern, int32_t shiftBy, err_t *e)
 {
 	terror(adjustSteps(pattern, NR_BARS(pattern),
 	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, shiftBy, e))
+
 	for (GSList *cur = (GSList *) CHILDREN(pattern); cur != NULL;
 	  cur = g_slist_next(cur)) {
 		pattern_t *child = (pattern_t *) cur->data;
@@ -2715,54 +2744,54 @@ finish:
 	return;
 }
 
-static Container *getCentreBox(void)
+static CompositeComponent *getCentreBox(CompositeComponent *compositeComponent)
 {
 	MARK();
 
-	Container *valuesBox = getBox(application.component, TRUE);
-	Container *randomisationBox = getBox(application.component, TRUE);
-	Container *loadStoreBox = getBox(application.component, TRUE);
-	Container *result = getBox(application.component, TRUE);
-	Container *box = getBox(application.component, FALSE);
-
-	result->addContainer(box);
+	CompositeComponent *valuesBox = NULL;
+	CompositeComponent *randomisationBox = NULL;
+	CompositeComponent *loadStoreBox = NULL;
+	CompositeComponent *result = getBox(compositeComponent, TRUE);
+	CompositeComponent *box = getBox(result, FALSE);
 
 	parentOrModeButton = getSimpleButton(box, "Parent!", cbParentOrMode, NULL);
 	topOrAssignOrEditButton =
 	  getSimpleButton(box, "Top!", cbTopOrAssignOrEdit, NULL);
+
 	promoteButton = getSimpleButton(box, "Promote", cbPromote, NULL);
-	
-	box->addContainer(loadStoreBox);
+
+	loadStoreBox = getBox(box, TRUE);
+
 	loadButton = getSimpleButton(loadStoreBox, "Load ...", cbLoad, NULL);
 	storeButton = getSimpleButton(loadStoreBox, "Store ...", cbStore, NULL);
-	barsButton = getSimpleButton(box, "Bars ...", cbBars, NULL);
-	stepsPerBarButton = getSimpleButton(box, "Steps per Bar ...",
-	  cbStepsPerBar, NULL);
 
-	box = getBox(application.component, FALSE);
-	result->addContainer(box);
+	barsButton = getSimpleButton(box, "Bars ...", cbBars, NULL);
+	stepsPerBarButton =
+	  getSimpleButton(box, "Steps per Bar ...", cbStepsPerBar, NULL);
+
+	box = getBox(result, FALSE);
 	childrenButton = getSimpleButton(box, "Children ...", cbChildren, NULL);
 	siblingsButton = getSimpleButton(box, "Siblings ...", cbSiblings, NULL);
 	previousButton = getSimpleButton(box, "Previous", cbPrevious, NULL);
 	nextButton = getSimpleButton(box, "Next", cbNext, NULL);
-	box->addContainer(valuesBox);
+	valuesBox =getBox(box, TRUE);
 	valuesButton = getSimpleButton(valuesBox, "Values ...", cbValues, NULL);
 	velocitiesButton =
 	  getSimpleButton(valuesBox, "Velocities ...", cbVelocities, NULL);
-	box->addContainer(randomisationBox);
-	randomiseSpinButton = getSpinButton(application.component, randomisationBox,
-	  0, 100, 50);
-	randomiseButton = getSimpleButton(randomisationBox,
-	  "Randomise!", cbRandomise, NULL);
+	randomisationBox = getBox(box, TRUE);
+	randomiseSpinButton = getSpinButton(randomisationBox, 0, 100, 50);
+	randomiseButton =
+	  getSimpleButton(randomisationBox, "Randomise!", cbRandomise, NULL);
 
 	return result;
 }
 
-static Container *getLowestBox(void)
+static CompositeComponent *getLowestBox(
+  CompositeComponent *compositeComponent)
 {
 	MARK();
 
-	Container *result = getBox(application.component, FALSE);
+	CompositeComponent *result = getBox(compositeComponent, FALSE);
 
 	shiftLeftButton = getSimpleButton(result, "<< SHIFT", cbShiftLeft, NULL);
 	shiftRightButton = getSimpleButton(result, "SHIFT >>", cbShiftRight, NULL);
@@ -2770,42 +2799,44 @@ static Container *getLowestBox(void)
 	return result;
 }
 
-static Container *getLowerBox(void)
+static CompositeComponent *getLowerBox(CompositeComponent *compositeComponent)
 {
 	MARK();
+    
+    CompositeComponent *result =
+      getBox(compositeComponent, TRUE);
 
-	return getBox(application.component, TRUE);
-}
-
-static Container *getApplicationContainer(void)
-{
-	MARK();
-
-	Container *box = NULL;
-	Container *result = getBox(application.component, TRUE);
-
-	box = getCentreBox();
-	result->addContainer(box);
-
-	//this initialisation is necessary because the editor may
-	//have been destroyed and created again => we must prevent
-	//stepsView to be delete()d in render()
-	stepsView = NULL;
-	stepsBox = box = getLowerBox();
-	result->addContainer(box);
-
-	box = getLowestBox();
-	result->addContainer(box);
+	stepsViewport = new StepsViewport(result);
 
 	return result;
 }
 
-static void setup(KVstSequencerAudioProcessorEditor *editor)
+static CompositeComponent *getApplicationContainer(
+  KVstSequencerAudioProcessorEditor *kVstSequencerAudioProcessorEditor)
 {
 	MARK();
 
-	application.component = editor;
-	application.container = getApplicationContainer();
+	CompositeComponent *result =
+	  getBox(application.kVstSequencerAudioProcessorEditor, TRUE);
+
+	getCentreBox(result);
+	getLowerBox(result);
+	getLowestBox(result);
+
+	return result;
+}
+
+static void setup(KVstSequencerAudioProcessorEditor 
+  *kVstSequencerAudioProcessorEditor)
+{
+	MARK();
+
+	application.kVstSequencerAudioProcessorEditor =
+	  kVstSequencerAudioProcessorEditor;
+	application.compositeComponent =
+	  getApplicationContainer(kVstSequencerAudioProcessorEditor);
+
+	kVstSequencerAudioProcessorEditor->setSize(WINDOW_WIDTH, WINDOW_HEIGHT);
 }
 
 static void teardown(void)
@@ -2817,7 +2848,7 @@ static void teardown(void)
 	}
 
 	destroyDialog();
-	delete application.container;
+	application.kVstSequencerAudioProcessorEditor->deleteAllChildren();
 }
 
 //==============================================================================
@@ -2840,6 +2871,8 @@ KVstSequencerAudioProcessorEditor::~KVstSequencerAudioProcessorEditor()
 
 	teardown();
 
+	deleteAllChildren();
+
 finish:
 	return;
 }
@@ -2849,30 +2882,25 @@ void KVstSequencerAudioProcessorEditor::paint (Graphics& g)
 {
 	MARK();
 
-    g.fillAll (Colours::white);
-
-    g.setColour (Colours::black);
-    g.setFont (15.0f);
+    g.fillAll(Colours::white);
+    g.setColour(Colours::black);
+    g.setFont(15.0f);
 }
 
 void KVstSequencerAudioProcessorEditor::resized()
 {
 	MARK();
 
-	layout(application.component, application.container);
+	layout(application.kVstSequencerAudioProcessorEditor,
+	  application.compositeComponent);
 }
 
-static SimpleLabel *getLabel(Container *container, const char *text)
+static SimpleLabel *getLabel(Component *parent, const char *text)
 {
+	//TODO: remove this delegate function
 	MARK();
 
-	SimpleLabel *result = new SimpleLabel();
-
-	if (text != NULL) {
-		result->setText(text);
-	}
-
-	container->addComponent(result);
+	SimpleLabel *result = new SimpleLabel(parent, text);
 
 	return result;
 }
@@ -2885,16 +2913,18 @@ static void runDialog(DialogComponent *dialogComponent)
 
 	destroyDialog();
 	launchOptions.content.setOwned(dialogComponent);
-	layout(dialogComponent, dialogComponent->container);
+	layout(dialogComponent, dialogComponent->getCompositeComponent());
 	dialog.window = launchOptions.launchAsync();
+	dialog.dialogComponent = dialogComponent;
 }
 
-static void showDialog(Container * (*fnGetDialog)(Component *))
+static void showDialog(CompositeComponent * (*fnGetDialog)
+  (DialogComponent *))
 {
 	MARK();
 
-	DialogComponent *dialogComponent = new DialogComponent();
+	DialogComponent *dialogComponent =
+	  new DialogComponent(fnGetDialog);
 
-	dialogComponent->container = fnGetDialog(dialogComponent);
 	runDialog(dialogComponent);
 }

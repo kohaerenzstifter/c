@@ -5,6 +5,8 @@
 
 #include "../JuceLibraryCode/JuceHeader.h"
 
+#include "kVstSequencer.h"
+
 //==============================================================================
 /**
 */
@@ -52,6 +54,5 @@ private:
     //==============================================================================
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KVstSequencerAudioProcessor)
 };
-
 
 #endif  // PLUGINPROCESSOR_H_INCLUDED

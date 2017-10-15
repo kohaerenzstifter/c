@@ -18,28 +18,6 @@
 
 #include <glib.h>
 
-class Container
-{
-public:
-	Container(Component *component, gboolean vertical);
-    virtual ~Container();
-	void addContainer(Container *container);
-	void addComponent(Component *component);
-	void removeContainer(Container *container);
-	void removeComponent(Component *component);
-	void layout(Rectangle<int> rectangle);
-    //==============================================================================
-protected:
-	Component *component;
-
-private:
-	void addElement(void *element);
-	void removeElement(void *element);
-	GSList *elements;
-	gboolean vertical;
-};
-
-
 //==============================================================================
 /**
 */
@@ -60,6 +38,19 @@ private:
     KVstSequencerAudioProcessor& processor;
 	
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (KVstSequencerAudioProcessorEditor)
+};
+
+class CompositeComponent : public Component
+{
+public:
+	CompositeComponent(Component *parent, gboolean vertical);
+	virtual ~CompositeComponent() override;
+	void resized() override;
+
+private:
+	gboolean vertical;
+	void movedOrResized();
+
 };
 
 
