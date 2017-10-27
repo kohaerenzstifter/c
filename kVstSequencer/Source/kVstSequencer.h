@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <kohaerenzstiftung.h>
 
-#if 1
+#if 0
 #define MARK() \
   do { \
     FILE *file = getOutFile(); \
@@ -305,7 +305,7 @@ typedef struct pattern {
   ((t) == patternTypeController) ? 1 : \
   SEGFAULT_NUMBER)
 #define MAX_BARS 512
-#define MAX_EVENTSTEPS_PER_BAR 8192
+#define MAX_EVENTSTEPS_PER_BAR 131072
 #define MAX_STEPS_PER_BAR(p) \
   (IS_DUMMY((p)) ? (MAX_EVENTSTEPS_PER_BAR / 1) : \
   (MAX_EVENTSTEPS_PER_BAR / (EVENTSTEPS_PER_USERSTEP(TYPE((p))))))
@@ -486,6 +486,10 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e);
 void lock(lockContext_t *lockContext, err_t *e);
 void unlock(lockContext_t *lockContext);
+void lockMutex(mutex_t *mutex, err_t *e);
+void unlockMutex(mutex_t *mutex, err_t *e);
+void initialiseMutex(mutex_t *mutex, err_t *e);
+void destroyMutex(mutex_t *mutex);
 
 #ifdef __cplusplus
 };

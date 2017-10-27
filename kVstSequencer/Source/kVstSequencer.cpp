@@ -2,7 +2,34 @@
 
 #include "PluginProcessor.h"
 
-static void lockMutex(mutex_t *mutex, err_t *e)
+void destroyMutex(mutex_t *mutex)
+{
+	MARK();
+
+	if (!(mutex->initialised)) {
+		goto finish;
+	}
+
+	pthread_mutex_destroy(&(mutex->value));
+
+	mutex->initialised = FALSE;
+
+finish:
+	return;
+}
+
+void initialiseMutex(mutex_t *mutex, err_t *e)
+{
+	MARK();
+
+	terror(failIfFalse((pthread_mutex_init(&(mutex->value), NULL) == 0)))
+	mutex->initialised = TRUE;
+
+finish:
+	return;
+}
+
+void lockMutex(mutex_t *mutex, err_t *e)
 {
 	MARK();
 
@@ -15,7 +42,7 @@ finish:
 	return;
 }
 
-static void unlockMutex(mutex_t *mutex, err_t *e)
+void unlockMutex(mutex_t *mutex, err_t *e)
 {
 	MARK();
 
@@ -272,7 +299,7 @@ static void redirect(pattern_t *pattern, uint32_t startIdx,
 	}
 }
 
-void moveStepOnToNext(pattern_t *pattern, noteUserStep_t *noteUserStep)
+static void moveStepOnToNext(pattern_t *pattern, noteUserStep_t *noteUserStep)
 {
 	MARK();
 
@@ -287,7 +314,7 @@ void moveStepOnToNext(pattern_t *pattern, noteUserStep_t *noteUserStep)
 	isNoteOnEventStep->onNoteEvent = NULL;
 }
 
-void removeNote(noteUserStep_t *noteUserStep)
+static void removeNote(noteUserStep_t *noteUserStep)
 {
 	MARK();
 
@@ -298,7 +325,7 @@ void removeNote(noteUserStep_t *noteUserStep)
 	free(noteUserStep->onNoteEvent);
 }
 
-void previousNoteOff(pattern_t *pattern,
+static void previousNoteOff(pattern_t *pattern,
   noteUserStep_t *noteUserStep, noteUserStep_t *previous, uint32_t eventStepIdx)
 {
 	MARK();
@@ -314,7 +341,7 @@ void previousNoteOff(pattern_t *pattern,
 	noteEvent->noteEventStep->offNoteEvent = noteEvent;
 }
 
-void nextNoteOn(pattern_t *pattern, noteEventStep_t *offNoteEventStep,
+static void nextNoteOn(pattern_t *pattern, noteEventStep_t *offNoteEventStep,
   noteUserStep_t *next, noteValue_t *noteValue, uint32_t userStepIdx,
   uint32_t eventStepIdx)
 {
@@ -1298,6 +1325,10 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 	pattern_t *p = NULL;
 	OutputStream *outputStream = NULL;
 	InputStream *inputStream = NULL;
+	gboolean locked = FALSE;
+
+	terror(lock(lockContext, e))
+	locked = TRUE;
 
 	if (load) {
 		inputStream = (InputStream *) stream;
@@ -1350,7 +1381,11 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 	}
 
 	freeMe = NULL;
+
 finish:
+	if (locked) {
+		unlock(lockContext);
+	}
 	if (freeMe != NULL) {
 		freePattern((pattern_t *) freeMe);
 	}
@@ -1371,7 +1406,7 @@ void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e)
 
 	terror(unsoundAllPatterns(lockContext, e))
 
-	if (patterns.root != NULL) {
+	if ((newRoot == NULL)/*&&(patterns.root != NULL)*/) {
 		freePattern(((pattern_t *) patterns.root));
 	}
 	patterns.root = newRoot;

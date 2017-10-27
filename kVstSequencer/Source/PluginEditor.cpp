@@ -71,7 +71,7 @@ CompositeComponent::~CompositeComponent()
 {
 	MARK();
 
-	deleteAllChildren();
+	this->deleteAllChildren();
 }
 
 void CompositeComponent::resized()
@@ -110,8 +110,11 @@ public:
 
 	virtual ~StepsViewport() override {
 		MARK();
-		//TODO
-		//delete this->stepsComponent;
+
+		//TODO: really delete?
+		if (this->stepsComponent != NULL) {
+			delete this->stepsComponent;
+		}
 	}
 
 	void resized() override {
@@ -125,6 +128,7 @@ public:
 			this->stepsComponent->setSize(
 			  this->stepsComponent->getWidth(), this->getHeight());
 		}
+
 finish:
 		return;
 	}
@@ -194,7 +198,11 @@ private:
 	String *string;
 };
 
-static struct {
+#define SIGNALLING
+#define SIGNALLING_MUX
+
+#ifdef SIGNALLING
+static volatile struct {
 	pattern_t *pattern;
 	uint32_t bar;
 	GSList *labels;
@@ -203,6 +211,12 @@ static struct {
 	uint64_t generation;
 	uint64_t lastGeneration;
 	SimpleLabel *lastLabel;
+#ifdef SIGNALLING_MUX
+	struct {
+		mutex_t mutex;
+		gboolean value;
+	} rebuild;
+#endif
 } signalling = {
 	.pattern = NULL,
 	.bar = 0,
@@ -213,6 +227,7 @@ static struct {
 	.lastGeneration = 0,
 	.lastLabel = NULL,
 };
+
 
 static void unsignalStep()
 {
@@ -266,18 +281,43 @@ static void doSignalStep(int step)
 finish:
 	return;
 }
-
+#endif
 static gboolean initialised = FALSE;
 
 void KVstSequencerAudioProcessorEditor::handleCommandMessage(int commandId)
 {
 	MARK();
 
+#ifdef SIGNALLING
+#ifdef SIGNALLING_MUX
+	gboolean locked = FALSE;
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+
+	if (signalling.rebuild.value) {
+		goto finish;
+	}
+	terror(lockMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+	locked = TRUE;
+	if (signalling.rebuild.value) {
+		goto finish;
+	}
+#endif
 	if (commandId < 0) {
 		unsignalStep();
 	} else {
 		doSignalStep(commandId);
 	}
+
+#ifdef SIGNALLING_MUX
+finish:
+	if (locked) {
+		unlockMutex(((mutex_t *) &(signalling.rebuild.mutex)), NULL);
+	}
+#endif
+#endif
 }
 
 void guiSignalStep(int step)
@@ -677,6 +717,7 @@ public:
 		MARK();
 
 		this->setSize(width, height);
+
 	}
 
 	CompositeComponent *getCompositeComponent(void) {
@@ -689,7 +730,7 @@ private:
 	CompositeComponent *compositeComponent;
 };
 
-static struct {
+static volatile struct {
 	DialogWindow *window;
 	DialogComponent *dialogComponent;
 } dialog = {
@@ -814,19 +855,21 @@ static void cbDoAddPattern(void *data)
 	  createPattern.patternType,  createPattern.channelSpinButton->value,
 	  createPattern.controllerSpinButton->value);
 
-	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, 0, e))
-
 	terror(lock(&lockContext, e))
 	locked = TRUE;
 
+	terror(adjustSteps(pattern, NR_BARS(pattern),
+	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, 0, e))
+
 	CHILDREN(createPattern.parent) =
 	  g_slist_append((GSList *) CHILDREN(createPattern.parent), pattern);
+
 
 	unlock(&lockContext);
 	locked = FALSE;
 
 	render();
+
 	showDialog(getPatternListDialog);
 
 finish:
@@ -953,6 +996,7 @@ static void cbSetupNoteValue(void *data)
 	}
 
 	render();
+
 	showDialog(getValuesDialog);
 
 finish:
@@ -1461,12 +1505,15 @@ static void enableButtons(void)
 	stepsPerBarButton->setEnabled(
 	  (g_slist_length(((GSList *) CHILDREN(current.pattern))) < 1));
 	siblingsButton->setEnabled(TRUE);
+
 	if (current.bar > 0) {
 		previousButton->setEnabled(TRUE);
 	}
+
 	if (current.bar < (NR_BARS(current.pattern) - 1)) {
 		nextButton->setEnabled(TRUE);
 	}
+
 	if (nrValues > 0) {
 		randomiseButton->setEnabled(TRUE);
 	}
@@ -1477,6 +1524,7 @@ static void enableButtons(void)
 	if (NR_USERSTEPS(current.pattern) < 2) {
 		goto finish;
 	}
+
 	if (isAnyStepLockedByParent(current.pattern)) {
 		goto finish;
 	}
@@ -1574,7 +1622,9 @@ static void addStepLabels(CompositeComponent *container, uint32_t idx,
 	setColor(label, idx, shadesSize, shades);
 
 	label = getLabel(container, NULL);
+#ifdef SIGNALLING
 	signalling.labels = g_slist_append(signalling.labels, label);
+#endif
 }
 
 static void cbLockSlide(void *data)
@@ -1584,6 +1634,7 @@ static void cbLockSlide(void *data)
 	uint32_t idx = GPOINTER_TO_UINT(data);
 	
 	lockSlide(current.pattern, idx);
+
 	render();
 }
 
@@ -1594,6 +1645,7 @@ static void cbLockUserStep(void *data)
 	uint32_t idx = GPOINTER_TO_UINT(data);
 	
 	lockUserStep(current.pattern, idx);
+
 	render();
 }
 
@@ -1668,6 +1720,7 @@ static void cbSlide(void *data)
 
 	terror(setSlide(current.pattern, noteUserStep,
 	  (!noteUserStep->slide), idx, &lockContext, e))
+
 	render();
 
 finish:
@@ -1712,6 +1765,7 @@ static void cbDummyStep(void *data)
 	dummyUserStep = (dummyUserStep_t *) USERSTEP_AT(current.pattern, idx);
 	terror(setDummyStep(current.pattern, dummyUserStep,
 	  !(dummyUserStep->set), &lockContext, e))
+
 	render();
 
 finish:
@@ -1748,6 +1802,7 @@ static void cbNoteStep(void *data)
 
 	terror(setNoteStep(current.pattern, noteUserStep,
 	  value, velocity, idx, &lockContext, e))
+
 	render();
 
 finish:
@@ -1776,6 +1831,7 @@ static void cbControllerStep(void *data)
 
 	terror(setControllerStep(current.pattern, controllerUserStep,
 	  value, idx, &lockContext, e))
+
 	render();
 
 finish:
@@ -1830,20 +1886,26 @@ static void renderSteps(pattern_t *pattern, uint32_t bar,
 	}
 
 	free(shades);
-
+#ifdef SIGNALLING
 	signalling.bar = bar;
 	signalling.pattern = pattern;
 	signalling.bars = NR_BARS(pattern);
 	signalling.userStepsPerBar = NR_USERSTEPS_PER_BAR(pattern);
+#endif
 }
 
 static void render(void)
 {
 	MARK();
 
-	gboolean locked = FALSE;
 	CompositeComponent *stepsComponent = NULL;
-	uint32_t width;
+	uint32_t width = 0;
+#ifdef SIGNALLING
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+#endif
 
 	setTexts();
 
@@ -1865,10 +1927,17 @@ static void render(void)
 	shiftRightButton->setEnabled(FALSE);
 	randomiseSpinButton->setEnabled(live ? FALSE : TRUE);
 
-	stepsViewport->setStepsComponent(NULL, 0);
-
+#ifdef SIGNALLING
+#ifdef SIGNALLING_MUX
+	terror(lockMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+	signalling.rebuild.value = TRUE;
+	terror(unlockMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+#endif
 	g_slist_free(signalling.labels); signalling.labels = NULL;
 	signalling.lastLabel = NULL;
+
+	stepsViewport->setStepsComponent(NULL, 0);
+#endif
 
 	if (live) {
 		goto finish;
@@ -1900,9 +1969,14 @@ static void render(void)
 	stepsViewport->setStepsComponent(stepsComponent, width);
 
 finish:
-	signalling.generation++;
 	layout(application.kVstSequencerAudioProcessorEditor,
 	  application.compositeComponent);
+#ifdef SIGNALLING
+	signalling.generation++;
+#ifdef SIGNALLING_MUX
+	signalling.rebuild.value = FALSE;
+#endif
+#endif
 }
 
 static SimpleButton *getSimpleButton(Component *parent,
@@ -1933,9 +2007,12 @@ static void cbSetBars(void *data)
 		current.bar = NR_BARS(pattern) - 1;
 	}
 
-finish:
-	destroyDialog();
 	render();
+
+	destroyDialog();
+
+finish:
+	return;
 }
 
 static void cbSetStepsPerBar(void *data)
@@ -1951,9 +2028,12 @@ static void cbSetStepsPerBar(void *data)
 	terror(adjustSteps(pattern, NR_BARS(pattern),
 	  numberPicker.label->getText(FALSE).getIntValue(), &lockContext, 0, e))
 
-finish:
-	destroyDialog();
 	render();
+
+	destroyDialog();
+
+finish:
+	return;
 }
 
 static void cbPickBars(pickType_t pickType)
@@ -2082,6 +2162,7 @@ static void cbEnterPattern(void *data)
 	MARK();
 
 	enterPattern(((pattern_t *) data));
+
 	destroyDialog();
 }
 
@@ -2097,6 +2178,7 @@ static void cbDeletePattern(void *data)
 	terror(deleteChild(patternList.parent, ((GSList *) data), &lockContext, e))
 
 	render();
+
 	showDialog(getPatternListDialog);
 
 finish:
@@ -2142,6 +2224,7 @@ static void cbDeleteValue(void *data)
 	  g_slist_delete_link(VALUES(current.pattern), link);
 
 	render();
+
 	showDialog(getValuesDialog);
 }
 
@@ -2157,6 +2240,7 @@ static void cbDeleteVelocity(void *data)
 	  g_slist_delete_link(VELOCITIES(current.pattern), link);
 
 	render();
+
 	showDialog(getVelocitiesDialog);
 }
 
@@ -2283,8 +2367,10 @@ static void cbAssignToBank(void *data)
 	}
 
 	banks[idx] = clonePattern(current.pattern);
-	destroyDialog();
+
 	render();
+
+	destroyDialog();
 }
 
 static void cbEditFromBank(void *data)
@@ -2343,6 +2429,7 @@ static CompositeComponent *getBanksDialog(
 		snprintf(label, sizeof(label), "%c#%u",
 		  NOTE2CHAR(notes[idx].name), octave);
 		addBank(result, i, label);
+
 carryOn:
 		i++;
 		idx++;
@@ -2420,6 +2507,7 @@ static void liveMode(void)
 	initErr(e);
 
 	setLive(&lockContext, NULL, e);
+
 	render();
 }
 
@@ -2532,8 +2620,10 @@ static void cbLoad(void *data)
 		  g_slist_append((GSList *) patterns.root->children, pattern);
 	}
 	pattern = NULL;
+
 	unlock(&lockContext);
 	locked = FALSE;
+
 	render();
 
 finish:
@@ -2653,6 +2743,7 @@ finish:
 static void shiftPattern(pattern_t *pattern, gboolean right, err_t *e)
 {
 	terror(shiftPattern2(pattern, right ? 1 : -1, e))
+
 	render();
 
 finish:
@@ -2701,6 +2792,7 @@ static void cbPrevious(void *data)
 	MARK();
 
 	current.bar--;
+
 	render();
 }
 
@@ -2709,6 +2801,7 @@ static void cbNext(void *data)
 	MARK();
 
 	current.bar++;
+
 	render();
 }
 
@@ -2738,6 +2831,7 @@ static void cbRandomise(void *data)
 	  randomiseSpinButton->value, &lockContext);
 
 	render();
+
 	randomising = FALSE;
 
 finish:
@@ -2831,24 +2925,41 @@ static void setup(KVstSequencerAudioProcessorEditor
 {
 	MARK();
 
+	err_t err;
+	err_t *e = &err;
+
+	initErr(e);
+#ifdef SIGNALLING
+#ifdef SIGNALLING_MUX
+	terror(initialiseMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+#endif
+#endif
 	application.kVstSequencerAudioProcessorEditor =
 	  kVstSequencerAudioProcessorEditor;
 	application.compositeComponent =
 	  getApplicationContainer(kVstSequencerAudioProcessorEditor);
 
 	kVstSequencerAudioProcessorEditor->setSize(WINDOW_WIDTH, WINDOW_HEIGHT);
+
+finish:
+	return;
 }
 
 static void teardown(void)
 {
 	MARK();
 
+	destroyDialog();
+
+	application.kVstSequencerAudioProcessorEditor->deleteAllChildren();
+#ifdef SIGNALLING
 	if (signalling.labels != NULL) {
 		g_slist_free(signalling.labels); signalling.labels = NULL;
 	}
-
-	destroyDialog();
-	application.kVstSequencerAudioProcessorEditor->deleteAllChildren();
+#ifdef SIGNALLING_MUX
+	destroyMutex(((mutex_t *) &(signalling.rebuild.mutex)));
+#endif
+#endif
 }
 
 //==============================================================================
@@ -2871,7 +2982,7 @@ KVstSequencerAudioProcessorEditor::~KVstSequencerAudioProcessorEditor()
 
 	teardown();
 
-	deleteAllChildren();
+	this->deleteAllChildren();
 
 finish:
 	return;
@@ -2912,6 +3023,7 @@ static void runDialog(DialogComponent *dialogComponent)
 	DialogWindow::LaunchOptions launchOptions;
 
 	destroyDialog();
+
 	launchOptions.content.setOwned(dialogComponent);
 	layout(dialogComponent, dialogComponent->getCompositeComponent());
 	dialog.window = launchOptions.launchAsync();

@@ -37,7 +37,7 @@ void performNoteEventStep(noteEventStep_t *noteEventStep,
 	if (noteEventStep->offNoteEvent != NULL) {
 		if (noteEventStep->onNoteEvent == NULL) {
 			MidiMessage off =
-			  MidiMessage::noteOff(0, MIDI_PITCH(noteEventStep->offNoteEvent));
+			  MidiMessage::noteOff(1, MIDI_PITCH(noteEventStep->offNoteEvent));
 			midiBuffer.addEvent(off, (*position)++);
 		} else {
 			noteEvent_t *noteEvent =
@@ -52,7 +52,7 @@ void performNoteEventStep(noteEventStep_t *noteEventStep,
 
 	if (noteEventStep->onNoteEvent != NULL) {
 		MidiMessage on =
-		  MidiMessage::noteOn(0, MIDI_PITCH(noteEventStep->onNoteEvent),
+		  MidiMessage::noteOn(1, MIDI_PITCH(noteEventStep->onNoteEvent),
 		    noteEventStep->onNoteEvent->on.velocity);
 		midiBuffer.addEvent(on, (*position)++);
 		notesOff.value =
@@ -73,7 +73,7 @@ void performControllerEventStep(pattern_t *pattern,
 	}
 
 	
-	midiBuffer.addEvent(MidiMessage::controllerEvent(0,
+	midiBuffer.addEvent(MidiMessage::controllerEvent(1,
 	  pattern->controller.parameter,
 	  controllerEventStep->controllerValue->value), (*position)++);
 
@@ -185,12 +185,13 @@ finish:
 	return;
 }
 
-static void setRoot(MidiBuffer& midiBuffer)
+static gboolean setRoot(MidiBuffer& midiBuffer)
 {
 	MARK();
 
 	MidiMessage msg;
 	int32_t ignore = 0;
+	pattern_t *root = ((pattern_t *) patterns.root);
 
 	for (MidiBuffer::Iterator it(midiBuffer); it.getNextEvent(msg, ignore);) {
 		if (msg.isNoteOn()) {
@@ -209,6 +210,8 @@ static void setRoot(MidiBuffer& midiBuffer)
 			patterns.root = banks[idx];
 		}
 	}
+
+	return (root != patterns.root);
 }
 
 static void process(
@@ -231,6 +234,17 @@ static void process(
 	terror(lock(&lockContext, e))
 	locked = TRUE;
 
+	if (live) {
+		if (setRoot(midiBuffer)) {
+			terror(allNotesOff(&lockContext, e))
+		}
+
+	} else {
+		nextPressedIdx = 0;
+	}
+
+	midiBuffer.clear();
+
 	if (!currentPositionInfo->isPlaying) {
 		if (isPlaying) {
 			terror(allNotesOff(&lockContext, e))
@@ -240,22 +254,16 @@ static void process(
 		stopped = TRUE;
 	}
 
-	if (live) {
-		setRoot(midiBuffer);
-	}
-
-	midiBuffer.clear();
-
 	for (cur = midiMessages; cur != NULL; cur = g_slist_next(cur)) {
 		MidiMessage mm;
 		midiMessage = (midiMessage_t *) cur->data;
 
 		switch (midiMessage->midiMessageType) {
 			case midiMessageTypeNoteOff:
-				mm = MidiMessage::noteOff(0, midiMessage->noteOff.noteNumber);
+				mm = MidiMessage::noteOff(1, midiMessage->noteOff.noteNumber);
 				break;
 			case midiMessageTypeController:
-				mm = MidiMessage::controllerEvent(0,
+				mm = MidiMessage::controllerEvent(1,
 				  midiMessage->controller.parameter,
 				  midiMessage->controller.value);
 			default:
@@ -266,6 +274,7 @@ static void process(
 		midiBuffer.addEvent(mm, position++);
 	}
 	g_slist_free((GSList *) midiMessages); midiMessages = NULL;
+
 	if (stopped) {
 		goto finish;
 	}
@@ -294,17 +303,6 @@ finish:
 	}
 }
 
-static void initialiseMutex(mutex_t *mutex, err_t *e)
-{
-	MARK();
-
-	terror(failIfFalse((pthread_mutex_init(&(mutex->value), NULL) == 0)))
-	mutex->initialised = TRUE;
-
-finish:
-	return;
-}
-
 static void setupPatterns(err_t *e)
 {
 	MARK();
@@ -323,10 +321,44 @@ static void setupPatterns(err_t *e)
 finish:
 	return;
 }
-
+#if 0
+static void processSignal(int signum)
+{
+fprintf(getOutFile(), "%s (%s:%d) signal: %d\n",  __FUNCTION__, __FILE__, __LINE__, signum);
+fflush(getOutFile());
+}
+#endif
 static void setup(err_t *e)
 {
 	MARK();
+#if 0
+struct sigaction action;
+
+action.sa_handler = &processSignal;
+
+sigaction(SIGILL, &action, NULL);
+sigaction(SIGTRAP, &action, NULL);
+sigaction(SIGABRT, &action, NULL);
+sigaction(SIGBUS, &action, NULL);
+sigaction(SIGFPE, &action, NULL);
+sigaction(SIGSEGV, &action, NULL);
+sigaction(SIGPIPE, &action, NULL);
+sigaction(SIGALRM, &action, NULL);
+sigaction(SIGCHLD, &action, NULL);
+sigaction(SIGTSTP, &action, NULL);
+sigaction(SIGTTIN, &action, NULL);
+sigaction(SIGTTOU, &action, NULL);
+sigaction(SIGPROF, &action, NULL);
+sigaction(SIGWINCH, &action, NULL);
+sigaction(SIGSYS, &action, NULL);
+
+#endif
+
+#if 0
+sigset_t mask;
+sigfillset(&mask);
+sigprocmask(SIG_SETMASK, &mask, NULL);
+#endif
 
 	terror(initialiseMutex(&(mutex.value), e))
 
@@ -396,22 +428,6 @@ static void teardownPatterns(void)
 
 	freePattern(((pattern_t *) patterns.root));
 	patterns.root = NULL;
-
-finish:
-	return;
-}
-
-static void destroyMutex(mutex_t *mutex)
-{
-	MARK();
-
-	if (!(mutex->initialised)) {
-		goto finish;
-	}
-
-	pthread_mutex_destroy(&(mutex->value));
-
-	mutex->initialised = FALSE;
 
 finish:
 	return;
@@ -553,7 +569,7 @@ bool KVstSequencerAudioProcessor::isBusesLayoutSupported
 }
 #endif
 
-void KVstSequencerAudioProcessor::processBlock (AudioSampleBuffer& buffer,
+void KVstSequencerAudioProcessor::processBlock(AudioSampleBuffer& buffer,
   MidiBuffer& mm)
 {
 	MARK();
@@ -643,14 +659,12 @@ finish:
 	if (memoryOutputStream != NULL) {
 		delete memoryOutputStream;
 	}
-	return;
 }
 
 void KVstSequencerAudioProcessor::setStateInformation (const void* data,
   int sizeInBytes)
 {
 	MARK();
-
 /*
 	You should use this method to restore your parameters from this memory
 	block, whose contents will have been created by the getStateInformation()
@@ -712,7 +726,6 @@ finish:
 	if (pattern != NULL) {
 		freePattern(pattern);
 	}
-	return;
  }
 
 //==============================================================================
