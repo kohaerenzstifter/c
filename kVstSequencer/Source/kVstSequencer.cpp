@@ -136,21 +136,24 @@ finish:
 	return;
 }
 
-static midiMessage_t *getMidiMessage(midiMessageType_t midiMessageType)
+static midiMessage_t *getMidiMessage(midiMessageType_t midiMessageType,
+  uint8_t channel)
 {
 	MARK();
 
 	midiMessage_t *result = (midiMessage_t *) calloc(1, sizeof(midiMessage_t));
 	result->midiMessageType = midiMessageType;
+	result->channel = channel;
 
 	return result;
 }
 
-midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value)
+midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value,
+  uint8_t channel)
 {
 	MARK();
 
-	midiMessage_t *result = getMidiMessage(midiMessageTypeController);
+	midiMessage_t *result = getMidiMessage(midiMessageTypeController, channel);
 
 	result->controller.parameter = parameter;
 	result->controller.value = value;
@@ -162,7 +165,8 @@ midiMessage_t *getNoteOffMidiMessage(noteEvent_t *noteEvent)
 {
 	MARK();
 
-	midiMessage_t *result = getMidiMessage(midiMessageTypeNoteOff);
+	midiMessage_t *result =
+	  getMidiMessage(midiMessageTypeNoteOff, CHANNEL(noteEvent->pattern));
 	result->noteOff.noteNumber = MIDI_PITCH(noteEvent);
 
 	return result;
@@ -356,10 +360,12 @@ static void nextNoteOn(pattern_t *pattern, noteEventStep_t *offNoteEventStep,
 	  eventStep + EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
 
 	onNoteEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
+	onNoteEvent->pattern = pattern;
 	onNoteEvent->noteValue = noteValue;
 	onNoteEvent->noteEventStep = mustStep;
 
 	noteOffEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
+	noteOffEvent->pattern = pattern;
 	noteOffEvent->noteValue = noteValue;
 	noteOffEvent->noteEventStep = offNoteEventStep;
 
@@ -441,6 +447,7 @@ static void doSetNoteStep(pattern_t *pattern,
 	}
 	if (onNoteEvent == NULL) {
 		onNoteEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
+		onNoteEvent->pattern = pattern;
 		onNoteEvent->noteEventStep =
 		  (noteEventStep_t *) EVENTSTEP_AT(pattern, (eventStepIdx));
 		onNoteEvent->noteEventStep->onNoteEvent = onNoteEvent;
@@ -461,6 +468,7 @@ static void doSetNoteStep(pattern_t *pattern,
 	}
 	if (offNoteEvent == NULL) {
 		offNoteEvent = (noteEvent_t *) calloc(1, sizeof(noteEvent_t));
+		offNoteEvent->pattern = pattern;
 		eventStepIdx += EVENTSTEPS_PER_USERSTEP(TYPE((pattern)));
 		if (!noteUserStep->slide) {
 			eventStepIdx--;
@@ -1411,6 +1419,10 @@ void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e)
 	}
 	patterns.root = newRoot;
 	live = (newRoot == NULL);
+
+	if (!live) {
+		velocity = 127;
+	}
 
 finish:
 	if (locked) {

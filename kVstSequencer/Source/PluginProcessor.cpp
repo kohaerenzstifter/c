@@ -30,14 +30,15 @@ static gboolean initialised = FALSE;
   } while (FALSE);
 
 void performNoteEventStep(noteEventStep_t *noteEventStep,
-  MidiBuffer& midiBuffer, int32_t *position)
+  MidiBuffer& midiBuffer, int32_t *position, uint8_t channel)
 {
 	MARK();
 
 	if (noteEventStep->offNoteEvent != NULL) {
 		if (noteEventStep->onNoteEvent == NULL) {
 			MidiMessage off =
-			  MidiMessage::noteOff(1, MIDI_PITCH(noteEventStep->offNoteEvent));
+			  MidiMessage::noteOff(channel,
+			  MIDI_PITCH(noteEventStep->offNoteEvent));
 			midiBuffer.addEvent(off, (*position)++);
 		} else {
 			noteEvent_t *noteEvent =
@@ -52,8 +53,8 @@ void performNoteEventStep(noteEventStep_t *noteEventStep,
 
 	if (noteEventStep->onNoteEvent != NULL) {
 		MidiMessage on =
-		  MidiMessage::noteOn(1, MIDI_PITCH(noteEventStep->onNoteEvent),
-		    noteEventStep->onNoteEvent->on.velocity);
+		  MidiMessage::noteOn(channel, MIDI_PITCH(noteEventStep->onNoteEvent),
+		    ((juce::uint8) ((velocity * noteEventStep->onNoteEvent->on.velocity) / 127)));
 		midiBuffer.addEvent(on, (*position)++);
 		notesOff.value =
 		  noteEventStep->onNoteEvent->on.offNoteEvent->off.noteOffLink =
@@ -64,7 +65,7 @@ void performNoteEventStep(noteEventStep_t *noteEventStep,
 
 void performControllerEventStep(pattern_t *pattern,
   controllerEventStep_t *controllerEventStep,
-  MidiBuffer& midiBuffer, int32_t *position)
+  MidiBuffer& midiBuffer, int32_t *position, uint8_t channel)
 {
 	MARK();
 
@@ -73,7 +74,7 @@ void performControllerEventStep(pattern_t *pattern,
 	}
 
 	
-	midiBuffer.addEvent(MidiMessage::controllerEvent(1,
+	midiBuffer.addEvent(MidiMessage::controllerEvent(channel,
 	  pattern->controller.parameter,
 	  controllerEventStep->controllerValue->value), (*position)++);
 
@@ -122,10 +123,10 @@ void performStep(pattern_t *pattern, uint64_t eventStep,
 
 	if (IS_NOTE(pattern)) {
 		performNoteEventStep(((noteEventStep_t *) EVENTSTEP_AT(pattern, idx)),
-		  midiBuffer, position);
+		  midiBuffer, position, CHANNEL(pattern));
 	} else {
 		performControllerEventStep(pattern, ((controllerEventStep_t *)
-		  EVENTSTEP_AT(pattern, idx)), midiBuffer, position);
+		  EVENTSTEP_AT(pattern, idx)), midiBuffer, position, CHANNEL(pattern));
 	}
 finish:
 	return;
@@ -196,6 +197,7 @@ static gboolean setRoot(MidiBuffer& midiBuffer)
 	for (MidiBuffer::Iterator it(midiBuffer); it.getNextEvent(msg, ignore);) {
 		if (msg.isNoteOn()) {
 			addNote(msg.getNoteNumber());
+			velocity = msg.getVelocity();
 		} else if (msg.isNoteOff()) {
 			removeNote(msg.getNoteNumber());
 		}
@@ -238,7 +240,6 @@ static void process(
 		if (setRoot(midiBuffer)) {
 			terror(allNotesOff(&lockContext, e))
 		}
-
 	} else {
 		nextPressedIdx = 0;
 	}
@@ -260,10 +261,10 @@ static void process(
 
 		switch (midiMessage->midiMessageType) {
 			case midiMessageTypeNoteOff:
-				mm = MidiMessage::noteOff(1, midiMessage->noteOff.noteNumber);
+				mm = MidiMessage::noteOff(midiMessage->channel, midiMessage->noteOff.noteNumber);
 				break;
 			case midiMessageTypeController:
-				mm = MidiMessage::controllerEvent(1,
+				mm = MidiMessage::controllerEvent(midiMessage->channel,
 				  midiMessage->controller.parameter,
 				  midiMessage->controller.value);
 			default:

@@ -1014,7 +1014,7 @@ static void cbTriggerControllerValue(void *data)
 
 	midiMessage =
 	  getControllerMidiMessage(setupValue.pattern->controller.parameter,
-	  intValue);
+	  intValue, CHANNEL(setupValue.pattern));
 	fireMidiMessage(&lockContext, midiMessage, NULL);
 
 finish:

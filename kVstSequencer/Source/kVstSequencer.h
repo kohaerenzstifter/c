@@ -66,6 +66,7 @@ typedef enum {
 
 typedef struct {
 	midiMessageType_t midiMessageType;
+	uint8_t channel;
 	union {
 		struct {
 			int32_t noteNumber;
@@ -121,9 +122,12 @@ typedef struct {
 	volatile noteEvent_t *offNoteEvent;
 } noteEventStep_t;
 
+typedef struct pattern pattern_t;
+
 struct noteEvent {
 	volatile noteEventStep_t *noteEventStep;
 	volatile noteValue_t *noteValue;
+	volatile pattern_t *pattern;
 	union {
 		struct {
 			uint8_t velocity;
@@ -158,7 +162,7 @@ typedef struct {
 	gboolean locked;
 } dummyUserStep_t;
 
-typedef struct pattern {
+struct pattern {
 	patternType_t patternType;
 	char *name;
 	struct pattern *parent;
@@ -190,7 +194,7 @@ typedef struct pattern {
 			} steps;
 		} controller;
 	};
-} pattern_t;
+};
 
 #define SEGFAULT_POINTER (((null_t *) NULL)->pointer)
 #define SEGFAULT_NUMBER (((null_t *) NULL)->number)
@@ -347,6 +351,12 @@ VARIABLE( \
   FALSE \
 )
 
+VARIABLE ( \
+  volatile int32_t, \
+  velocity, \
+  127 \
+)
+
 VARIABLE( \
   volatile gboolean, \
   goingDown, \
@@ -476,7 +486,8 @@ gboolean getLocked(gboolean *unlockable,
 void guiSignalStep(int step);
 void guiSignalStop(void);
 midiMessage_t *getNoteOffMidiMessage(noteEvent_t *noteEvent);
-midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value);
+midiMessage_t *getControllerMidiMessage(uint8_t parameter,
+  int8_t value, uint8_t channel);
 void fireMidiMessage(lockContext_t *lockContext,
   midiMessage_t *midiMessage, err_t *e);
 gboolean isAnyStepLockedByParent(pattern_t *pattern);
