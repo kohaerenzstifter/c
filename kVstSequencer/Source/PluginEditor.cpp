@@ -350,14 +350,6 @@ finish:
 
 static gboolean randomising = FALSE;
 
-static struct {
-	SimpleLabel *label;
-	TextButton *upButton;
-	TextButton *downButton;
-	fnPickNumber_t fnPickNumber;
-	void *ptr;
-} numberPicker;
-
 static void slide(uint32_t idx, err_t *e)
 {
 	MARK();
@@ -624,8 +616,8 @@ finish:
 	}
 
 private:
-	TextButton *downButton;
-	TextButton *upButton;
+	SimpleButton *downButton;
+	SimpleButton *upButton;
 	int32_t min;
 	int32_t max;
 	String *lastResult;
@@ -1397,7 +1389,7 @@ static CompositeComponent *getSetupPatternDialog(
 	SimpleTextEditor *nameEntry = NULL;
 	SpinButton *channelSpinButton = NULL;
 	SpinButton *controllerSpinButton = NULL;
-	TextButton *button = NULL;
+	SimpleButton *button = NULL;
 	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 	CompositeComponent *box  = new CompositeComponent(result, FALSE);
 
@@ -1732,7 +1724,7 @@ static void renderSlide(CompositeComponent *container, pattern_t *pattern,
 {
 	MARK();
 
-	TextButton *button = NULL;
+	SimpleButton *button = NULL;
 	noteUserStep_t *step = ((noteUserStep_t *) USERSTEP_AT(pattern, idx));
 	gboolean enabled = IS_SET(step, TYPE(pattern));
 	const char *text = step->slide ? "!SLIDE" : "SLIDE";
@@ -1989,6 +1981,14 @@ static SimpleButton *getSimpleButton(Component *parent,
 	return result;
 }
 
+static struct {
+	SimpleLabel *label;
+	SimpleButton *upButton;
+	SimpleButton *downButton;
+	fnPickNumber_t fnPickNumber;
+	void *ptr;
+} numberPicker;
+
 static void cbSetBars(void *data)
 {
 	MARK();
@@ -2107,8 +2107,8 @@ static CompositeComponent *getNumberPickerBox(CompositeComponent *parent,
 	MARK();
 
 	SimpleLabel *label = NULL;
-	TextButton *upButton = NULL;
-	TextButton *downButton = NULL;
+	SimpleButton *upButton = NULL;
+	SimpleButton *downButton = NULL;
 	CompositeComponent *result = getBox(parent, FALSE);
 	
 	downButton = getSimpleButton(result, "-", cbPickLess, NULL);
@@ -2134,7 +2134,7 @@ static CompositeComponent *getNumberPickerDialog(
 
 	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 	CompositeComponent *box = NULL;
-	TextButton *okButton = NULL;
+	SimpleButton *okButton = NULL;
 
 	box = getNumberPickerBox(result, fnPickNumber, initial, ptr);
 
@@ -2283,7 +2283,7 @@ static CompositeComponent *getValuesVelocitiesDialog(
 
 	GSList *cur = NULL;
 	CompositeComponent *box = NULL;
-	TextButton *button = NULL;
+	SimpleButton *button = NULL;
 	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 
 	for (cur = velocities ? VELOCITIES(current.pattern) :
@@ -2449,7 +2449,7 @@ static CompositeComponent *getPatternListDialog(
 {
 	MARK();
 
-	TextButton *button = NULL;
+	SimpleButton *button = NULL;
 	CompositeComponent *box = NULL;
 	CompositeComponent *result = new CompositeComponent(dialogComponent, TRUE);
 
