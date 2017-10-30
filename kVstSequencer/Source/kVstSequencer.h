@@ -34,20 +34,6 @@ extern "C" {
 #define MICROTICKS_PER_BAR EVENTSTEPS_PER_BAR
 
 typedef struct {
-    pthread_mutex_t value;
-    gboolean initialised;
-} mutex_t;
-
-typedef struct {
-	uint32_t count;
-} lockContext_t;
-
-#define DECLARE_LOCKCONTEXT \
-  static lockContext_t lockContext = { \
-	.count = 0 \
-  };
-
-typedef struct {
 	void *pointer;
 	int8_t number;
 	gboolean boolean;
@@ -245,7 +231,7 @@ struct pattern {
       ((controllerUserStep_t *) (s))->value = NULL; \
       doSetControllerStep(((p)), ((controllerUserStep_t *) (s)), (i)); \
     } else { \
-      setSlide(((p)), ((noteUserStep_t *) (s)), FALSE, (i), NULL, NULL); \
+      setSlide(((p)), ((noteUserStep_t *) (s)), FALSE, (i), NULL); \
       unsetNoteStep((p), ((noteUserStep_t *) (s)), (i)); \
     } \
   } while (FALSE);
@@ -314,23 +300,23 @@ struct pattern {
   (IS_DUMMY((p)) ? (MAX_EVENTSTEPS_PER_BAR / 1) : \
   (MAX_EVENTSTEPS_PER_BAR / (EVENTSTEPS_PER_USERSTEP(TYPE((p))))))
 
-#define SET_STEP_FROM_STEP(p, s, t, i, lst, l, e) \
+#define SET_STEP_FROM_STEP(p, s, t, i, lst, e) \
   do { \
     if (IS_DUMMY((p))) { \
       dummyUserStep_t *source = (dummyUserStep_t *) (s); \
       dummyUserStep_t *target = (dummyUserStep_t *) (t); \
-      terror(setDummyStep((p), target, source->set, (l), (e))) \
+      terror(setDummyStep((p), target, source->set, (e))) \
     } else if (IS_CONTROLLER((p))) { \
       controllerUserStep_t *source = (controllerUserStep_t *) (s); \
       controllerUserStep_t *target = (controllerUserStep_t *) (t); \
-      terror(setControllerStep((p), target, source->value, (i), (l), (e))) \
+      terror(setControllerStep((p), target, source->value, (i), (e))) \
     } else { \
       noteUserStep_t *source = (noteUserStep_t *) (s); \
       noteUserStep_t *target = (noteUserStep_t *) (t); \
       terror(setNoteStep((p), target, source->value, \
-	    source->velocity, (i), (l), (e))) \
+	    source->velocity, (i), (e))) \
       terror(setSlide((p), target, (lst) ? FALSE : \
-        source->slide, (i), (l), (e))) \
+        source->slide, (i), (e))) \
       target->slideLocked = source->slideLocked; \
     } \
     LOCKED((t), TYPE((p))) = LOCKED((s), TYPE((p))); \
@@ -367,18 +353,6 @@ VARIABLE( \
    noteEvent_t, \
   *pendingOff, \
   NULL \
-)
-
-VARIABLE ( \
-  struct { \
-    mutex_t value; \
-  }, \
-  mutex, \
-  { \
-    { \
-      .initialised = FALSE \
-    } \
-  } \
 )
 
 VARIABLE( \
@@ -452,35 +426,31 @@ void freeNoteValue(noteValue_t *noteValue);
 void lockUserStep(pattern_t *pattern, uint32_t idx);
 void lockSlide(pattern_t *pattern, uint32_t idx);
 void setDummyStep(pattern_t *pattern, dummyUserStep_t *dummyUserStep,
-  gboolean set, lockContext_t *lockContext, err_t *e);
+  gboolean set, err_t *e);
 void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
-  GSList *value, GSList *velocity, uint32_t idx, lockContext_t *lockContext,
-  err_t *e);
+  GSList *value, GSList *velocity, uint32_t idx, err_t *e);
 void setControllerStep(pattern_t *pattern,
   controllerUserStep_t *controllerUserStep, GSList *value,
-  uint32_t idx, lockContext_t *lockContext, err_t *e);
+  uint32_t idx, err_t *e);
 void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
-  gboolean slide, uint32_t idx, lockContext_t *lockContext,
-  err_t *e);
+  gboolean slide, uint32_t idx, err_t *e);
 void freePattern(pattern_t *pattern);
 pattern_t *allocatePattern(pattern_t *parent);
 noteValue_t *allocateNoteValue(void);
 controllerValue_t *allocateControllerValue(void);
 void setSteps(pattern_t *pattern);
 void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
-  lockContext_t *lockContext, int32_t shift, err_t *e);
+  int32_t shift, err_t *e);
 void deleteChild(pattern_t *parent, GSList *child,
-  lockContext_t *lockContext, err_t *e);
+  err_t *e);
 void freeValue(pattern_t *pattern, void *value);
 gboolean anyChildStepSet(pattern_t *pattern, uint32_t idx);
-void unsoundPattern(lockContext_t *lockContext, pattern_t *pattern, err_t *e);
-void unsoundAllPatterns(lockContext_t *lockContext, err_t *e);
+void unsoundPattern(pattern_t *pattern, err_t *e);
+void unsoundAllPatterns(err_t *e);
 void *output(void *param);
 void *input(void *param);
-void allNotesOff(lockContext_t *lockContext, err_t *e);
-void test(void);
-void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
-  lockContext_t *lockContext);
+void allNotesOff(err_t *e);
+void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability);
 gboolean getLocked(gboolean *unlockable,
   void *step, pattern_t *pattern, uint32_t idx, gboolean onlyByParent);
 void guiSignalStep(int step);
@@ -488,19 +458,14 @@ void guiSignalStop(void);
 midiMessage_t *getNoteOffMidiMessage(noteEvent_t *noteEvent);
 midiMessage_t *getControllerMidiMessage(uint8_t parameter,
   int8_t value, uint8_t channel);
-void fireMidiMessage(lockContext_t *lockContext,
-  midiMessage_t *midiMessage, err_t *e);
+void fireMidiMessage(midiMessage_t *midiMessage, err_t *e);
 gboolean isAnyStepLockedByParent(pattern_t *pattern);
-void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e);
-void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
+void promotePattern(pattern_t *pattern, err_t *e);
+void loadStorePattern(pattern_t **pattern,
   void *stream, gboolean load, pattern_t *parent, err_t *e);
-void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e);
-void lock(lockContext_t *lockContext, err_t *e);
-void unlock(lockContext_t *lockContext);
-void lockMutex(mutex_t *mutex, err_t *e);
-void unlockMutex(mutex_t *mutex, err_t *e);
-void initialiseMutex(mutex_t *mutex, err_t *e);
-void destroyMutex(mutex_t *mutex);
+void setLive(pattern_t *newRoot, err_t *e);
+void lock(void);
+void unlock(void);
 
 #ifdef __cplusplus
 };

@@ -20,8 +20,6 @@
 #define EXTENSION ".ksq"
 #define FILE_PATTERN "*" EXTENSION
 
-DECLARE_LOCKCONTEXT
-
 static Rectangle<int> getSubRectangle(gboolean vertical,
   Rectangle<int> *rectangle, uint32_t fraction)
 {
@@ -213,7 +211,7 @@ static volatile struct {
 	SimpleLabel *lastLabel;
 #ifdef SIGNALLING_MUX
 	struct {
-		mutex_t mutex;
+		CriticalSection *criticalSection;
 		gboolean value;
 	} rebuild;
 #endif
@@ -226,6 +224,10 @@ static volatile struct {
 	.generation = 0,
 	.lastGeneration = 0,
 	.lastLabel = NULL,
+	.rebuild = {
+		.criticalSection = NULL,
+		.value = FALSE
+	}
 };
 
 
@@ -299,7 +301,7 @@ void KVstSequencerAudioProcessorEditor::handleCommandMessage(int commandId)
 	if (signalling.rebuild.value) {
 		goto finish;
 	}
-	terror(lockMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+	signalling.rebuild.criticalSection->enter();
 	locked = TRUE;
 	if (signalling.rebuild.value) {
 		goto finish;
@@ -314,7 +316,7 @@ void KVstSequencerAudioProcessorEditor::handleCommandMessage(int commandId)
 #ifdef SIGNALLING_MUX
 finish:
 	if (locked) {
-		unlockMutex(((mutex_t *) &(signalling.rebuild.mutex)), NULL);
+		signalling.rebuild.criticalSection->exit();
 	}
 #endif
 #endif
@@ -358,7 +360,7 @@ static void slide(uint32_t idx, err_t *e)
 	  (noteUserStep_t *) (USERSTEP_AT(current.pattern, idx));
 
 	terror(setSlide(current.pattern, noteUserStep,
-	  (!noteUserStep->slide), idx, &lockContext, e))
+	  (!noteUserStep->slide), idx, e))
 
 finish:
 	return;
@@ -847,17 +849,17 @@ static void cbDoAddPattern(void *data)
 	  createPattern.patternType,  createPattern.channelSpinButton->value,
 	  createPattern.controllerSpinButton->value);
 
-	terror(lock(&lockContext, e))
+	lock();
 	locked = TRUE;
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, 0, e))
+	  NR_USERSTEPS_PER_BAR(pattern), 0, e))
 
 	CHILDREN(createPattern.parent) =
 	  g_slist_append((GSList *) CHILDREN(createPattern.parent), pattern);
 
 
-	unlock(&lockContext);
+	unlock();
 	locked = FALSE;
 
 	render();
@@ -866,7 +868,7 @@ static void cbDoAddPattern(void *data)
 
 finish:
 	if (locked) {
-		unlock(&lockContext);
+		unlock();
 	}
 }
 
@@ -942,10 +944,10 @@ static void cbSetupNoteValue(void *data)
 		}
 	}
 
-	terror(lock(&lockContext, e))
+	lock();
 	locked = TRUE;
 
-	terror(unsoundPattern(&lockContext, setupValue.pattern, e))
+	terror(unsoundPattern(setupValue.pattern, e))
 
 	if (noteValue == NULL) {
 		appendMe = noteValue = allocateNoteValue();
@@ -982,9 +984,9 @@ static void cbSetupNoteValue(void *data)
 
 		backupVelocity = noteUserStep->velocity;
 		terror(setNoteStep(setupValue.pattern, noteUserStep, NULL,
-		  NULL, i, &lockContext, e))
+		  NULL, i, e))
 		terror(setNoteStep(setupValue.pattern, noteUserStep, value,
-		  backupVelocity, i, &lockContext, e))
+		  backupVelocity, i, e))
 	}
 
 	render();
@@ -993,7 +995,7 @@ static void cbSetupNoteValue(void *data)
 
 finish:
 	if (locked) {
-		unlock(&lockContext);
+		unlock();
 	}
 }
 
@@ -1009,17 +1011,17 @@ static void cbTriggerControllerValue(void *data)
 
 	initErr(e);
 
-	terror(lock(&lockContext, e))
+	lock();
 	locked = TRUE;
 
 	midiMessage =
 	  getControllerMidiMessage(setupValue.pattern->controller.parameter,
 	  intValue, CHANNEL(setupValue.pattern));
-	fireMidiMessage(&lockContext, midiMessage, NULL);
+	fireMidiMessage(midiMessage, NULL);
 
 finish:
 	if (locked) {
-		unlock(&lockContext);
+		unlock();
 	}
 }
 
@@ -1040,7 +1042,7 @@ static void cbSetupControllerValue(void *data)
 
 	initErr(e);
 
-	terror(lock(&lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (controllerValue == NULL) {
@@ -1079,9 +1081,9 @@ static void cbSetupControllerValue(void *data)
 			}
 			backupValue = noteUserStep->value;
 			terror(setNoteStep(setupValue.pattern, noteUserStep, NULL,
-			  NULL, i, &lockContext, e))
+			  NULL, i, e))
 			terror(setNoteStep(setupValue.pattern, noteUserStep, backupValue,
-			  velocity, i, &lockContext, e))
+			  velocity, i, e))
 		}
 	}
 
@@ -1095,7 +1097,7 @@ static void cbSetupControllerValue(void *data)
 
 finish:
 	if (locked) {
-		unlock(&lockContext);
+		unlock();
 	}
 }
 
@@ -1711,7 +1713,7 @@ static void cbSlide(void *data)
 	initErr(e);
 
 	terror(setSlide(current.pattern, noteUserStep,
-	  (!noteUserStep->slide), idx, &lockContext, e))
+	  (!noteUserStep->slide), idx, e))
 
 	render();
 
@@ -1756,7 +1758,7 @@ static void cbDummyStep(void *data)
 
 	dummyUserStep = (dummyUserStep_t *) USERSTEP_AT(current.pattern, idx);
 	terror(setDummyStep(current.pattern, dummyUserStep,
-	  !(dummyUserStep->set), &lockContext, e))
+	  !(dummyUserStep->set), e))
 
 	render();
 
@@ -1793,7 +1795,7 @@ static void cbNoteStep(void *data)
 	} while ((value == NULL)&&anyChildStepSet(current.pattern, idx));
 
 	terror(setNoteStep(current.pattern, noteUserStep,
-	  value, velocity, idx, &lockContext, e))
+	  value, velocity, idx, e))
 
 	render();
 
@@ -1822,7 +1824,7 @@ static void cbControllerStep(void *data)
 	}
 
 	terror(setControllerStep(current.pattern, controllerUserStep,
-	  value, idx, &lockContext, e))
+	  value, idx, e))
 
 	render();
 
@@ -1921,9 +1923,9 @@ static void render(void)
 
 #ifdef SIGNALLING
 #ifdef SIGNALLING_MUX
-	terror(lockMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+	signalling.rebuild.criticalSection->enter();
 	signalling.rebuild.value = TRUE;
-	terror(unlockMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+	signalling.rebuild.criticalSection->exit();
 #endif
 	g_slist_free(signalling.labels); signalling.labels = NULL;
 	signalling.lastLabel = NULL;
@@ -2001,7 +2003,7 @@ static void cbSetBars(void *data)
 
 	terror(adjustSteps(pattern,
 	  numberPicker.label->getText(FALSE).getIntValue(),
-	  NR_STEPS_PER_BAR(pattern), &lockContext, 0, e))
+	  NR_STEPS_PER_BAR(pattern), 0, e))
 
 	if (current.bar >= NR_BARS(pattern)) {
 		current.bar = NR_BARS(pattern) - 1;
@@ -2026,7 +2028,7 @@ static void cbSetStepsPerBar(void *data)
 	initErr(e);
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  numberPicker.label->getText(FALSE).getIntValue(), &lockContext, 0, e))
+	  numberPicker.label->getText(FALSE).getIntValue(), 0, e))
 
 	render();
 
@@ -2175,7 +2177,7 @@ static void cbDeletePattern(void *data)
 
 	initErr(e);
 
-	terror(deleteChild(patternList.parent, ((GSList *) data), &lockContext, e))
+	terror(deleteChild(patternList.parent, ((GSList *) data), e))
 
 	render();
 
@@ -2337,13 +2339,13 @@ static pattern_t *clonePattern(pattern_t *cloneMe)
 	initErr(e);
 
 	memoryOutputStream = new MemoryOutputStream();
-	terror(loadStorePattern(&lockContext, ((pattern_t **) &cloneMe),
+	terror(loadStorePattern(((pattern_t **) &cloneMe),
 	  memoryOutputStream, FALSE, ((pattern_t *) PARENT(cloneMe)), e))
 	memoryOutputStream->flush();
 
 	memoryInputStream = new MemoryInputStream(memoryOutputStream->getData(),
 	  memoryOutputStream->getDataSize(), FALSE);
-	terror(loadStorePattern(&lockContext, ((pattern_t **) &result),
+	terror(loadStorePattern(((pattern_t **) &result),
 	  memoryInputStream, TRUE, (pattern_t *) NULL, e))
 
 finish:
@@ -2386,7 +2388,7 @@ static void cbEditFromBank(void *data)
 
 	destroyDialog();
 
-	terror(setLive(&lockContext, pattern, e))
+	terror(setLive(pattern, e))
 
 	enterPattern(pattern);
 
@@ -2506,7 +2508,7 @@ static void liveMode(void)
 
 	initErr(e);
 
-	setLive(&lockContext, NULL, e);
+	setLive(NULL, e);
 
 	render();
 }
@@ -2544,7 +2546,7 @@ static void cbPromote(void *data)
 
 	initErr(e);
 
-	terror(promotePattern(current.pattern, &lockContext, e))
+	terror(promotePattern(current.pattern, e))
 
 	render();
 
@@ -2602,9 +2604,9 @@ static void cbLoad(void *data)
 	terror(failIfFalse(((fileInputStream =
 	  new FileInputStream(*file)) != NULL)))
 	terror(fileInputStream->openedOk())
-	terror(loadStorePattern(&lockContext, &pattern, fileInputStream, TRUE,
+	terror(loadStorePattern(&pattern, fileInputStream, TRUE,
 	  (pattern_t *) patterns.root, e))
-	terror(lock(&lockContext, e))
+	lock();
 	locked = TRUE;
 	if ((IS_DUMMY(pattern))&&(NR_USERSTEPS(pattern) == 1)&&
 	  IS_SET(USERSTEP_AT(pattern, 0), TYPE(pattern))) {
@@ -2621,14 +2623,14 @@ static void cbLoad(void *data)
 	}
 	pattern = NULL;
 
-	unlock(&lockContext);
+	unlock();
 	locked = FALSE;
 
 	render();
 
 finish:
 	if (locked) {
-		unlock(&lockContext);
+		unlock();
 	}
 	if (pattern != NULL) {
 		freePattern(pattern);
@@ -2674,7 +2676,7 @@ static void cbStore(void *data)
 		free(tmp);
 	}
 
-	terror(loadStorePattern(&lockContext, &current.pattern, fileOutputStream,
+	terror(loadStorePattern(&current.pattern, fileOutputStream,
 	  FALSE, (pattern_t *) patterns.root, e))
 	fileOutputStream->flush();
 
@@ -2727,7 +2729,7 @@ static void cbChildren(void *data)
 static void shiftPattern2(pattern_t *pattern, int32_t shiftBy, err_t *e)
 {
 	terror(adjustSteps(pattern, NR_BARS(pattern),
-	  NR_USERSTEPS_PER_BAR(pattern), &lockContext, shiftBy, e))
+	  NR_USERSTEPS_PER_BAR(pattern), shiftBy, e))
 
 	for (GSList *cur = (GSList *) CHILDREN(pattern); cur != NULL;
 	  cur = g_slist_next(cur)) {
@@ -2828,7 +2830,7 @@ static void cbRandomise(void *data)
 	}
 	randomising = TRUE;
 	randomise(current.pattern, current.bar,
-	  randomiseSpinButton->value, &lockContext);
+	  randomiseSpinButton->value);
 
 	render();
 
@@ -2931,7 +2933,7 @@ static void setup(KVstSequencerAudioProcessorEditor
 	initErr(e);
 #ifdef SIGNALLING
 #ifdef SIGNALLING_MUX
-	terror(initialiseMutex(((mutex_t *) &(signalling.rebuild.mutex)), e))
+	signalling.rebuild.criticalSection = new CriticalSection();
 #endif
 #endif
 	application.kVstSequencerAudioProcessorEditor =
@@ -2957,7 +2959,7 @@ static void teardown(void)
 		g_slist_free(signalling.labels); signalling.labels = NULL;
 	}
 #ifdef SIGNALLING_MUX
-	destroyMutex(((mutex_t *) &(signalling.rebuild.mutex)));
+	delete signalling.rebuild.criticalSection;
 #endif
 #endif
 }

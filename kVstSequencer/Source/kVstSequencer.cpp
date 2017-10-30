@@ -2,94 +2,6 @@
 
 #include "PluginProcessor.h"
 
-void destroyMutex(mutex_t *mutex)
-{
-	MARK();
-
-	if (!(mutex->initialised)) {
-		goto finish;
-	}
-
-	pthread_mutex_destroy(&(mutex->value));
-
-	mutex->initialised = FALSE;
-
-finish:
-	return;
-}
-
-void initialiseMutex(mutex_t *mutex, err_t *e)
-{
-	MARK();
-
-	terror(failIfFalse((pthread_mutex_init(&(mutex->value), NULL) == 0)))
-	mutex->initialised = TRUE;
-
-finish:
-	return;
-}
-
-void lockMutex(mutex_t *mutex, err_t *e)
-{
-	MARK();
-
-	defineError();
-
-	terror(failIfFalse(mutex->initialised))
-	terror(failIfFalse((pthread_mutex_lock((&(mutex->value))) == 0)))
-
-finish:
-	return;
-}
-
-void unlockMutex(mutex_t *mutex, err_t *e)
-{
-	MARK();
-
-	defineError();
-
-	terror(failIfFalse(mutex->initialised))
-	pthread_mutex_unlock((&(mutex->value)));
-
-finish:
-	return;
-}
-
-void lock(lockContext_t *lockContext, err_t *e)
-{
-	MARK();
-
-	defineError();
-
-	terror(failIfFalse((lockContext != NULL)))
-
-	if (lockContext->count < 1) {
-		terror(lockMutex(&(mutex.value), e))
-	}
-	lockContext->count++;
-
-finish:
-	return;
-}
-
-void unlock(lockContext_t *lockContext)
-{
-	MARK();
-
-	err_t err;
-	err_t *e = &err;
-
-	initErr(e);
-
-	if (lockContext->count < 2) {
-		terror(unlockMutex(&(mutex.value), e))
-	}
-	lockContext->count--;
-
-finish:
-	return;
-}
-
 static gboolean anyStepSetForChild(pattern_t *parent, uint32_t idx,
   pattern_t *child)
 {
@@ -115,8 +27,7 @@ static gboolean anyStepSetForChild(pattern_t *parent, uint32_t idx,
 	return result;
 }
 
-void fireMidiMessage(lockContext_t *lockContext,
-  midiMessage_t *midiMessage, err_t *e)
+void fireMidiMessage(midiMessage_t *midiMessage, err_t *e)
 {
 	MARK();
 
@@ -124,14 +35,14 @@ void fireMidiMessage(lockContext_t *lockContext,
 
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	midiMessages = g_slist_prepend((GSList *) midiMessages, midiMessage);
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 	return;
 }
@@ -172,15 +83,15 @@ midiMessage_t *getNoteOffMidiMessage(noteEvent_t *noteEvent)
 	return result;
 }
 
-static void unsoundNoteEvent(lockContext_t *lockContext,
-  noteEvent_t *offNoteEvent, err_t *e)
+static void unsoundNoteEvent(noteEvent_t *offNoteEvent,
+  err_t *e)
 {
 	MARK();
 
 	midiMessage_t *midiMessage = NULL;
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (offNoteEvent->off.noteOffLink == NULL) {
@@ -188,7 +99,7 @@ static void unsoundNoteEvent(lockContext_t *lockContext,
 	}
 
 	midiMessage = getNoteOffMidiMessage(offNoteEvent);
-	terror(fireMidiMessage(lockContext, midiMessage, e))
+	terror(fireMidiMessage(midiMessage, e))
 	midiMessage = NULL;
 	notesOff.value =
 	  g_slist_delete_link((GSList *) notesOff.value,
@@ -197,13 +108,12 @@ static void unsoundNoteEvent(lockContext_t *lockContext,
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 	free(midiMessage);
 }
 
-void unsoundPattern(lockContext_t *lockContext,
-  pattern_t *pattern, err_t *e)
+void unsoundPattern(pattern_t *pattern, err_t *e)
 {
 	MARK();
 
@@ -212,7 +122,7 @@ void unsoundPattern(lockContext_t *lockContext,
 	gboolean locked = FALSE;
 
 	terror(failIfFalse((IS_NOTE(pattern))))
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (EVENTSTEPS(pattern) == NULL) {
@@ -225,18 +135,17 @@ void unsoundPattern(lockContext_t *lockContext,
 		if (noteEventStep->onNoteEvent == NULL) {
 			continue;
 		}
-		terror(unsoundNoteEvent(lockContext, (noteEvent_t *)
+		terror(unsoundNoteEvent((noteEvent_t *)
 		  noteEventStep->onNoteEvent->on.offNoteEvent, e))
 	}
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 	return;
 }
 
-static void unsoundPattern2(lockContext_t *lockContext,
-  pattern_t *pattern, err_t *e)
+static void unsoundPattern2(pattern_t *pattern, err_t *e)
 {
 	MARK();
 
@@ -244,26 +153,26 @@ static void unsoundPattern2(lockContext_t *lockContext,
 
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	for (GSList *cur = ((GSList *) CHILDREN(pattern)); cur != NULL;
 	  cur = g_slist_next(cur)) {
-		terror(unsoundPattern2(lockContext, ((pattern_t *) cur->data), e))
+		terror(unsoundPattern2(((pattern_t *) cur->data), e))
 	}
 
 	if (IS_NOTE(pattern)) {
-		terror(unsoundPattern(lockContext, pattern, e))
+		terror(unsoundPattern(pattern, e))
 	}
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 	return;
 }
 
-void unsoundAllPatterns(lockContext_t *lockContext, err_t *e)
+void unsoundAllPatterns(err_t *e)
 {
 	MARK();
 
@@ -271,16 +180,16 @@ void unsoundAllPatterns(lockContext_t *lockContext, err_t *e)
 
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (patterns.root != NULL) {
-		terror(unsoundPattern2(lockContext, ((pattern_t *) patterns.root), e))
+		terror(unsoundPattern2(((pattern_t *) patterns.root), e))
 	}
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 	return;
 }
@@ -535,7 +444,7 @@ void lockSlide(pattern_t *pattern, uint32_t idx)
 }
 
 void setDummyStep(pattern_t *pattern, dummyUserStep_t *dummyUserStep,
-  gboolean set, lockContext_t *lockContext, err_t *e)
+  gboolean set, err_t *e)
 {
 	MARK();
 
@@ -543,19 +452,19 @@ void setDummyStep(pattern_t *pattern, dummyUserStep_t *dummyUserStep,
 
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 	dummyUserStep->set = set;
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
 
 void setControllerStep(pattern_t *pattern,
   controllerUserStep_t *controllerUserStep, GSList *value,
-  uint32_t idx, lockContext_t *lockContext, err_t *e)
+  uint32_t idx, err_t *e)
 {
 	MARK();
 
@@ -563,7 +472,7 @@ void setControllerStep(pattern_t *pattern,
 
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	controllerUserStep->value = value;
@@ -571,13 +480,12 @@ void setControllerStep(pattern_t *pattern,
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
 
 void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
-  GSList *value, GSList *velocity, uint32_t idx, lockContext_t *lockContext,
-  err_t *e)
+  GSList *value, GSList *velocity, uint32_t idx, err_t *e)
 {
 	MARK();
 
@@ -589,13 +497,12 @@ void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
 		goto finish;
 	}
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
-	terror(unsoundPattern(lockContext, pattern, e))
+	terror(unsoundPattern(pattern, e))
 
 	if (value == NULL) {
-		terror(setSlide(pattern, noteUserStep, FALSE, idx,
-		  lockContext, e))
+		terror(setSlide(pattern, noteUserStep, FALSE, idx, e))
 	}
 	terror(unsetNoteStep(pattern, noteUserStep, idx))
 
@@ -608,13 +515,12 @@ void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
 
 void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
-  gboolean slide, uint32_t idx, lockContext_t *lockContext,
-  err_t *e)
+  gboolean slide, uint32_t idx, err_t *e)
 {
 	MARK();
 
@@ -628,11 +534,9 @@ void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
 
 	terror(failIfFalse(((!slide)||(noteUserStep->value != NULL))))
 
-	if (lockContext != NULL) {
-		terror(lock(lockContext, e))
-		locked = TRUE;
-		terror(unsoundPattern(lockContext, pattern, e))
-	}
+	lock();
+	locked = TRUE;
+	terror(unsoundPattern(pattern, e))
 
 	terror(unsetNoteStep(pattern, noteUserStep, idx))
 	noteUserStep->slide = slide;
@@ -643,7 +547,7 @@ void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
 
@@ -751,8 +655,8 @@ void setSteps(pattern_t *pattern)
 	}
 }
 
-void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
-  lockContext_t *lockContext, int32_t shift, err_t *e)
+void adjustSteps(pattern_t *pattern, uint32_t bars,
+  uint32_t stepsPerBar, int32_t shift, err_t *e)
 {
 	MARK();
 
@@ -771,11 +675,11 @@ void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
 	uint32_t stepMultiplier = (stepsPerBar >= haveStepsPerBar) ?
 	  1 : (haveStepsPerBar / stepsPerBar);
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (IS_NOTE(pattern)) {
-		terror(unsoundPattern(lockContext, pattern, e))
+		terror(unsoundPattern(pattern, e))
 	}
 
 	if (!IS_DUMMY(pattern)) {
@@ -807,19 +711,19 @@ void adjustSteps(pattern_t *pattern, uint32_t bars, uint32_t stepsPerBar,
 			terror(SET_STEP_FROM_STEP(pattern,
 			  USERSTEP_AT2(pattern->patternType, userSteps, sourceStepIdx),
 			  USERSTEP_AT(pattern, targetStepIdx), targetStepIdx,
-			  last, lockContext, e))
+			  last, e))
 		}
 	}
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 	free(userSteps);
 	free(eventSteps);
 }
 
 void deleteChild(pattern_t *parent, GSList *childLink,
-  lockContext_t *lockContext, err_t *e)
+  err_t *e)
 {
 	MARK();
 
@@ -828,11 +732,11 @@ void deleteChild(pattern_t *parent, GSList *childLink,
 	gboolean locked = FALSE;
 	pattern_t *pattern = (pattern_t *) childLink->data;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (IS_NOTE(pattern)) {
-		terror(unsoundPattern(lockContext, pattern, e))
+		terror(unsoundPattern(pattern, e))
 	}
 
 	freePattern((pattern_t *) childLink->data);
@@ -842,11 +746,11 @@ void deleteChild(pattern_t *parent, GSList *childLink,
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
 
-void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e)
+void promotePattern(pattern_t *pattern, err_t *e)
 {
 	MARK();
 
@@ -856,11 +760,11 @@ void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e)
 	pattern_t *parent = NULL;
 	GSList *link = NULL;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (IS_NOTE(pattern)) {
-		terror(unsoundPattern(lockContext, pattern, e))
+		terror(unsoundPattern(pattern, e))
 	}
 
 	parent = PARENT(pattern);
@@ -874,14 +778,9 @@ void promotePattern(pattern_t *pattern, lockContext_t *lockContext, err_t *e)
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
-
-typedef struct {
-	lockContext_t *lockContext;
-	err_t *e;
-} crutch_t;
 
 static void noteOff(gpointer data, gpointer user_data)
 {
@@ -889,12 +788,10 @@ static void noteOff(gpointer data, gpointer user_data)
 
 	midiMessage_t *midiMessage = NULL;
 	noteEvent_t *noteEvent = (noteEvent_t *) data;
-	crutch_t *crutch = (crutch_t *) user_data;
-	lockContext_t *lockContext = crutch->lockContext;
-	err_t *e = crutch->e;
+	err_t *e = (err_t *) user_data;
 
 	midiMessage = getNoteOffMidiMessage(noteEvent);
-	terror(fireMidiMessage(lockContext, midiMessage, e))
+	terror(fireMidiMessage(midiMessage, e))
 	midiMessage = NULL;
 
 	noteEvent->off.noteOffLink = NULL;
@@ -903,32 +800,28 @@ finish:
 	free(midiMessage);
 }
 
-void allNotesOff(lockContext_t *lockContext, err_t *e)
+void allNotesOff(err_t *e)
 {
 	MARK();
 
 	defineError();
 
-	crutch_t crutch;
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
-	crutch.lockContext = lockContext;
-	crutch.e = e;
-	terror(g_slist_foreach((GSList *) notesOff.value, noteOff, &crutch))
+	terror(g_slist_foreach((GSList *) notesOff.value, noteOff, e))
 	g_slist_free((GSList *) notesOff.value);
 	notesOff.value = NULL;
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
 
-void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
-  lockContext_t *lockContext)
+void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability)
 {
 	MARK();
 
@@ -954,7 +847,7 @@ void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
 			}
 			if (IS_DUMMY(pattern)) {
 				setDummyStep(pattern, ((dummyUserStep_t *) step),
-				  setStep, lockContext, NULL);
+				  setStep, NULL);
 				continue;
 			}
 
@@ -965,13 +858,13 @@ void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
 			value = g_slist_nth(VALUES(pattern), idx);
 			if (IS_CONTROLLER(pattern)) {
 				setControllerStep(pattern,
-				  (controllerUserStep_t *) step, value, i, lockContext, NULL);
+				  (controllerUserStep_t *) step, value, i, NULL);
 				continue;
 			}
 			idx = (value != NULL) ? (rand() % nrVelocities) : nrVelocities;
 			velocity = g_slist_nth(VELOCITIES(pattern), idx);
 			setNoteStep(pattern, (noteUserStep_t *) step, value, velocity, i,
-			  lockContext, NULL);
+			  NULL);
 
 		} else if (!IS_NOTE(pattern)) {
 			continue;
@@ -992,7 +885,7 @@ void randomise(pattern_t *pattern, uint32_t bar, uint8_t probability,
 			continue;
 		}
 		setSlide(pattern, (noteUserStep_t *) step,
-		  slide, i, lockContext, NULL);
+		  slide, i, NULL);
 	}
 }
 
@@ -1219,8 +1112,8 @@ finish:
 	return;
 }
 
-static void loadStoreStep(lockContext_t *lockContext, void *step,
-  pattern_t *pattern, void *stream, uint32_t idx, gboolean load, err_t *e)
+static void loadStoreStep(void *step, pattern_t *pattern,
+  void *stream, uint32_t idx, gboolean load, err_t *e)
 {
 	MARK();
 
@@ -1241,7 +1134,7 @@ static void loadStoreStep(lockContext_t *lockContext, void *step,
 		}
 		terror(readWriteStream(&set, sizeof(set), stream, load, e))
 		if ((load)&&(set)) {
-			terror(setDummyStep(pattern, dummyUserStep, set, lockContext, e))
+			terror(setDummyStep(pattern, dummyUserStep, set, e))
 		}
 		goto finish;
 	}
@@ -1265,11 +1158,10 @@ static void loadStoreStep(lockContext_t *lockContext, void *step,
 			terror(setNoteStep(pattern, (noteUserStep_t *) step,
 			  g_slist_nth(VALUES(pattern), valuePosition),
 			  g_slist_nth(VELOCITIES(pattern), velocityPosition),
-			  idx, lockContext, e))
+			  idx, e))
 		} else {
 			terror(setControllerStep(pattern, (controllerUserStep_t *) step,
-			  g_slist_nth(VALUES(pattern), valuePosition), idx,
-			  lockContext, e))
+			  g_slist_nth(VALUES(pattern), valuePosition), idx, e))
 		}
 	}
 	if (IS_CONTROLLER(pattern)) {
@@ -1283,7 +1175,7 @@ static void loadStoreStep(lockContext_t *lockContext, void *step,
 	terror(readWriteStream(&slide, sizeof(slide), stream, load, e))
 	if (load&&slide) {
 		terror(setSlide(pattern, noteUserStep, slide,
-		  idx, lockContext, e))
+		  idx, e))
 	}
 	terror(readWriteStream(&(noteUserStep->slideLocked),
 	  sizeof(noteUserStep->slideLocked), stream, load, e))
@@ -1293,7 +1185,7 @@ finish:
 	return;
 }
 
-static void loadStoreChildren(lockContext_t *lockContext, pattern_t *parent,
+static void loadStoreChildren(pattern_t *parent,
   void *stream, gboolean load, err_t *e)
 {
 	MARK();
@@ -1312,7 +1204,7 @@ static void loadStoreChildren(lockContext_t *lockContext, pattern_t *parent,
 			child =
 			  (pattern_t *) g_slist_nth_data((GSList *) parent->children, i);
 		}
-		terror(loadStorePattern(lockContext, &child, stream, load, parent, e))
+		terror(loadStorePattern(&child, stream, load, parent, e))
 		if (load) {
 			parent->children =
 			  g_slist_append((GSList *) parent->children, child);
@@ -1323,9 +1215,8 @@ finish:
 	return;
 }
 
-void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
-  void *stream, gboolean load, pattern_t *parent,
-  err_t *e)
+void loadStorePattern(pattern_t **pattern, void *stream,
+  gboolean load, pattern_t *parent, err_t *e)
 {
 	MARK();
 
@@ -1335,7 +1226,7 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 	InputStream *inputStream = NULL;
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
 	if (load) {
@@ -1363,7 +1254,7 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 
 	if (load) {
 		terror(adjustSteps(p, NR_BARS(p),
-		  NR_USERSTEPS_PER_BAR(p), lockContext, 0,e))
+		  NR_USERSTEPS_PER_BAR(p), 0,e))
 	}
 
 	if (!IS_DUMMY(p)) {
@@ -1379,10 +1270,10 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 	for (uint32_t i = 0; i < NR_USERSTEPS(p); i++) {
 		void *step = USERSTEP_AT(p, i);
 
-		terror(loadStoreStep(lockContext, step, p, stream, i, load, e))
+		terror(loadStoreStep(step, p, stream, i, load, e))
 	}
 
-	terror(loadStoreChildren(lockContext, p, stream, load, e))
+	terror(loadStoreChildren(p, stream, load, e))
 
 	if (load) {
 		*pattern = p;
@@ -1392,7 +1283,7 @@ void loadStorePattern(lockContext_t *lockContext, pattern_t **pattern,
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 	if (freeMe != NULL) {
 		freePattern((pattern_t *) freeMe);
@@ -1401,7 +1292,7 @@ finish:
 }
 
 
-void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e)
+void setLive(pattern_t *newRoot, err_t *e)
 {
 	MARK();
 
@@ -1409,10 +1300,10 @@ void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e)
 
 	gboolean locked = FALSE;
 
-	terror(lock(lockContext, e))
+	lock();
 	locked = TRUE;
 
-	terror(unsoundAllPatterns(lockContext, e))
+	terror(unsoundAllPatterns(e))
 
 	if ((newRoot == NULL)/*&&(patterns.root != NULL)*/) {
 		freePattern(((pattern_t *) patterns.root));
@@ -1426,6 +1317,6 @@ void setLive(lockContext_t *lockContext, pattern_t *newRoot, err_t *e)
 
 finish:
 	if (locked) {
-		unlock(lockContext);
+		unlock();
 	}
 }
