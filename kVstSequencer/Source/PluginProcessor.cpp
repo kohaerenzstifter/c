@@ -345,6 +345,30 @@ static void setup(err_t *e)
 {
 	MARK();
 
+	sigset_t mask;
+	struct sigaction action;
+
+	sigfillset(&mask);
+	sigprocmask(SIG_SETMASK, &mask, NULL);
+
+	action.sa_handler = SIG_IGN;
+
+	sigaction(SIGILL, &action, NULL);
+	sigaction(SIGTRAP, &action, NULL);
+	sigaction(SIGABRT, &action, NULL);
+	sigaction(SIGBUS, &action, NULL);
+	sigaction(SIGFPE, &action, NULL);
+	sigaction(SIGSEGV, &action, NULL);
+	sigaction(SIGPIPE, &action, NULL);
+	sigaction(SIGALRM, &action, NULL);
+	sigaction(SIGCHLD, &action, NULL);
+	sigaction(SIGTSTP, &action, NULL);
+	sigaction(SIGTTIN, &action, NULL);
+	sigaction(SIGTTOU, &action, NULL);
+	sigaction(SIGPROF, &action, NULL);
+	sigaction(SIGWINCH, &action, NULL);
+	sigaction(SIGSYS, &action, NULL);
+
 	criticalSection = new CriticalSection();
 
 	terror(setupPatterns(e))
