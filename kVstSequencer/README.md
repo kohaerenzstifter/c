@@ -19,7 +19,7 @@ git clone https://github.com/WeAreROLI/JUCE.git
 ~~~~
 
 ## Get the VST SDK
-You also need the Steinberg VST SDK. When I started out with kVstSequencer, my DAW (Bitwig) didn't yet feature support for VST 3 plugins, so I set up for a VST 2 plugin. Unfortunately, the most up-to-date version of the SDK doesn't even support VST 2 plugin builds, so you'll need to download an older version. [This one](https://www.steinberg.net/sdk_downloads/vstsdk366_27_06_2016_build_61.zip "This one") is still working, so download and extract to ~/VST_SDK/.
+You also need the Steinberg VST SDK. When I started out with kVstSequencer, my DAW (Bitwig) didn't yet feature support for VST 3 plugins, so I set up for a VST 2 plugin. Unfortunately, the most up-to-date version of the SDK doesn't even support VST 2 plugin builds any more, so you'll need to download an older version. [This one](https://www.steinberg.net/sdk_downloads/vstsdk366_27_06_2016_build_61.zip "This one") is still working, so download and extract to ~/VST_SDK/.
 
 ## Check out libkohaerenzstiftung and kVstSequencer itself
 kVstSequencer also relies on libkohaerenzstiftung, my tiny little utility library with defines and functions I commonly use across my different projects. You can either clone my whole C repository or just sparse-check out kVstSequencer and libkohaerenzstiftung:
@@ -53,7 +53,7 @@ First you have to tell Bitwig where it can find the step sequencer plugin, so on
 
 ![1](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/1.jpg)
 
-Next, select an instrument track of your choosing and within the Device Panel click on "+". In the device selection dialog that comes up, just enter "kVst" in the search bar at the top and then select "kVstSequencer" at the right:
+Next, select an instrument track as you see fit and within the Device Panel click on "+". In the device selection dialog that comes up, just enter "kVst" in the search bar at the top and then select "kVstSequencer" at the right:
 
 ![2](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/2.jpg)
 
