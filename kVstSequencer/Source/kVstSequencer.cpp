@@ -947,7 +947,7 @@ static void readWriteStream(void *data, uint32_t length, void *stream,
 
 	if (reading) {
 		InputStream *inputStream = (InputStream *) stream;
-		terror(failIfFalse(inputStream->read(data, length) == length))
+		terror(failIfFalse(inputStream->read(data, (int) length) == length))
 	} else {
 		OutputStream *outputStream = (OutputStream *) stream;
 		terror(failIfFalse(outputStream->write(data, length)))

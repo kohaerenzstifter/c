@@ -3,17 +3,8 @@
 
 # build with "V=1" for verbose builds
 
-LDFLAGS+=`pkg-config --libs gtk+-3.0`                                  
-LDFLAGS+=`pkg-config --libs webkit2gtk-4.0`                          
-LDFLAGS+=`pkg-config --libs gobject-2.0`                  
-CFLAGS+=-I/usr/include/gtk-3.0               
-CFLAGS+=-I/usr/include/cairo                              
-CFLAGS+=-I/usr/include/pango-1.0                                    
-CFLAGS+=-I/usr/include/gdk-pixbuf-2.0                   
-CFLAGS+=-I/usr/include/atk-1.0         
-CFLAGS+=-I/usr/include/webkitgtk-4.0    
-CFLAGS+=-I/usr/include/libsoup-2.4                                                              
-CFLAGS+=-I/usr/include/webkitgtk-3.0
+LDFLAGS := `pkg-config --libs gtk+-3.0` `pkg-config --libs webkit2gtk-4.0` `pkg-config --libs gobject-2.0`                  
+CPPFLAGS := -I/usr/include/gtk-3.0 -I/usr/include/cairo -I/usr/include/pango-1.0 -I/usr/include/gdk-pixbuf-2.0 -I/usr/include/atk-1.0 -I/usr/include/webkitgtk-4.0 -I/usr/include/libsoup-2.4 -I/usr/include/webkitgtk-3.0
 
 ifneq ($(MAKECMDGOALS),clean)
 ifndef JUCE_PATH
@@ -22,12 +13,19 @@ endif
 ifndef KOHAERENZSTIFTUNG_PATH
 $(error Environment variable KOHAERENZSTIFTUNG_PATH not set)
 endif
+ifndef VST_PATH
+$(error Environment variable VST_PATH not set)
+endif
 endif
 ifeq ($(V), 1)
 V_AT =
 else
 V_AT = @
 endif
+
+CPPFLAGS += -I$(JUCE_PATH)/modules
+CPPFLAGS += -I$(KOHAERENZSTIFTUNG_PATH)
+CPPFLAGS += -I$(VST_PATH)
 
 # (this disables dependency generation if multiple architectures are set)
 DEPFLAGS := $(if $(word 2, $(TARGET_ARCH)), , -MMD)
@@ -54,17 +52,19 @@ ifeq ($(CONFIG),Debug)
     TARGET_ARCH := -march=native
   endif
 
-  JUCE_CPPFLAGS := $(DEPFLAGS) -DLINUX=1 -DDEBUG=1 -D_DEBUG=1 -DJUCER_LINUX_MAKE_6D53C8B4=1 -DJUCE_APP_VERSION=1.0.0 -DJUCE_APP_VERSION_HEX=0x10000 $(shell pkg-config --cflags alsa freetype2 libcurl x11 xext xinerama glib-2.0) -pthread -I../../JuceLibraryCode -I$(JUCE_PATH)/modules $(CPPFLAGS)
+  JUCE_CPPFLAGS := $(DEPFLAGS) -DLINUX=1 -DDEBUG=1 -D_DEBUG=1 -DJUCER_LINUX_MAKE_6D53C8B4=1 -DJUCE_APP_VERSION=1.0.0 -DJUCE_APP_VERSION_HEX=0x10000 $(shell pkg-config --cflags alsa freetype2 libcurl x11 xext xinerama glib-2.0) -pthread -I../../JuceLibraryCode $(CPPFLAGS)
 
   JUCE_CPPFLAGS_VST := -DJucePlugin_Build_VST=1 -DJucePlugin_Build_VST3=0 -DJucePlugin_Build_AU=0 -DJucePlugin_Build_AUv3=0 -DJucePlugin_Build_RTAS=0 -DJucePlugin_Build_AAX=0 -DJucePlugin_Build_Standalone=0
+
   JUCE_CFLAGS_VST := -fPIC
   JUCE_LDFLAGS_VST := -shared -Wl,--no-undefined
   JUCE_TARGET_VST := kVstSequencer.so
 
   JUCE_CPPFLAGS_SHARED_CODE := -DJucePlugin_Build_VST=1 -DJucePlugin_Build_VST3=0 -DJucePlugin_Build_AU=0 -DJucePlugin_Build_AUv3=0 -DJucePlugin_Build_RTAS=0 -DJucePlugin_Build_AAX=0 -DJucePlugin_Build_Standalone=0 -DJUCE_SHARED_CODE=1
+
   JUCE_TARGET_SHARED_CODE := kVstSequencer.a
 
-  JUCE_CFLAGS += $(JUCE_CPPFLAGS) $(TARGET_ARCH) -fPIC -g -ggdb -O3 -I$(KOHAERENZSTIFTUNG_PATH) $(CFLAGS)
+  JUCE_CFLAGS += $(JUCE_CPPFLAGS) $(TARGET_ARCH) -fPIC -g -ggdb -O3
   JUCE_CXXFLAGS += $(CXXFLAGS) $(JUCE_CFLAGS) -std=c++11 $(CXXFLAGS)
   JUCE_LDFLAGS += $(TARGET_ARCH) -L$(JUCE_BINDIR) -L$(JUCE_LIBDIR) -Wl,--no-undefined $(shell pkg-config --libs alsa freetype2 libcurl x11 xext xinerama glib-2.0) -lGL -ldl -lpthread -lrt  $(LDFLAGS)
 
@@ -81,7 +81,7 @@ ifeq ($(CONFIG),Release)
     TARGET_ARCH := -march=native
   endif
 
-  JUCE_CPPFLAGS := $(DEPFLAGS) -DLINUX=1 -DNDEBUG=1 -DJUCER_LINUX_MAKE_6D53C8B4=1 -DJUCE_APP_VERSION=1.0.0 -DJUCE_APP_VERSION_HEX=0x10000 $(shell pkg-config --cflags alsa freetype2 libcurl x11 xext xinerama glib-2.0) -pthread -I../../JuceLibraryCode -I$(JUCE_PATH)/modules $(CPPFLAGS)
+  JUCE_CPPFLAGS := $(DEPFLAGS) -DLINUX=1 -DNDEBUG=1 -DJUCER_LINUX_MAKE_6D53C8B4=1 -DJUCE_APP_VERSION=1.0.0 -DJUCE_APP_VERSION_HEX=0x10000 $(shell pkg-config --cflags alsa freetype2 libcurl x11 xext xinerama glib-2.0) -pthread -I../../JuceLibraryCode $(CPPFLAGS)
 
   JUCE_CPPFLAGS_VST := -DJucePlugin_Build_VST=1 -DJucePlugin_Build_VST3=0 -DJucePlugin_Build_AU=0 -DJucePlugin_Build_AUv3=0 -DJucePlugin_Build_RTAS=0 -DJucePlugin_Build_AAX=0 -DJucePlugin_Build_Standalone=0
   JUCE_CFLAGS_VST := -fPIC
@@ -91,7 +91,7 @@ ifeq ($(CONFIG),Release)
   JUCE_CPPFLAGS_SHARED_CODE := -DJucePlugin_Build_VST=1 -DJucePlugin_Build_VST3=0 -DJucePlugin_Build_AU=0 -DJucePlugin_Build_AUv3=0 -DJucePlugin_Build_RTAS=0 -DJucePlugin_Build_AAX=0 -DJucePlugin_Build_Standalone=0 -DJUCE_SHARED_CODE=1
   JUCE_TARGET_SHARED_CODE := kVstSequencer.a
 
-  JUCE_CFLAGS += $(JUCE_CPPFLAGS) $(TARGET_ARCH) -fPIC -O3 -I$(KOHAERENZSTIFTUNG_PATH) $(CFLAGS)
+  JUCE_CFLAGS += $(JUCE_CPPFLAGS) $(TARGET_ARCH) -fPIC -O3
   JUCE_CXXFLAGS += $(CXXFLAGS) $(JUCE_CFLAGS) -std=c++11 $(CXXFLAGS)
   JUCE_LDFLAGS += $(TARGET_ARCH) -L$(JUCE_BINDIR) -L$(JUCE_LIBDIR) -Wl,--no-undefined -fvisibility=hidden $(shell pkg-config --libs alsa freetype2 libcurl x11 xext xinerama glib-2.0) -lGL -ldl -lpthread -lrt  $(LDFLAGS)
 
@@ -150,7 +150,7 @@ $(JUCE_OBJDIR)/include_juce_audio_plugin_client_VST2_dd551e08.o: ../../JuceLibra
 $(JUCE_OBJDIR)/kohaerenzstiftung_4512e2f5.o: $(KOHAERENZSTIFTUNG_PATH)/kohaerenzstiftung.c
 	-$(V_AT)mkdir -p $(JUCE_OBJDIR)
 	@echo "Compiling kohaerenzstiftung.c"
-	$(V_AT)$(CC) $(JUCE_CFLAGS)$(JUCE_CPPFLAGS_SHARED_CODE) $(JUCE_CFLAGS_SHARED_CODE) -o "$@" -c "$<"
+	$(V_AT)$(CC) $(JUCE_CFLAGS) $(JUCE_CPPFLAGS_SHARED_CODE) $(JUCE_CFLAGS_SHARED_CODE) -o "$@" -c "$<"
 
 $(JUCE_OBJDIR)/kVstSequencer_a7b96a46.o: ../../Source/kVstSequencer.cpp
 	-$(V_AT)mkdir -p $(JUCE_OBJDIR)
@@ -160,7 +160,7 @@ $(JUCE_OBJDIR)/kVstSequencer_a7b96a46.o: ../../Source/kVstSequencer.cpp
 $(JUCE_OBJDIR)/table_556d8a0f.o: ../../Source/table.c
 	-$(V_AT)mkdir -p $(JUCE_OBJDIR)
 	@echo "Compiling table.c"
-	$(V_AT)$(CC) $(JUCE_CFLAGS)$(JUCE_CPPFLAGS_SHARED_CODE) $(JUCE_CFLAGS_SHARED_CODE) -o "$@" -c "$<"
+	$(V_AT)$(CC) $(JUCE_CFLAGS) $(JUCE_CPPFLAGS_SHARED_CODE) $(JUCE_CFLAGS_SHARED_CODE) -o "$@" -c "$<"
 
 $(JUCE_OBJDIR)/PluginProcessor_a059e380.o: ../../Source/PluginProcessor.cpp
 	-$(V_AT)mkdir -p $(JUCE_OBJDIR)

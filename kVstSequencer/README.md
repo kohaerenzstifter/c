@@ -13,18 +13,21 @@ kVstSequencer is made with the [JUCE](https://www.juce.com/ "JUCE") framework, w
 
 ~~~~
 cd ~
-mkdir -p git/WeAreROLI/
-cd git/WeAreROLI/
+mkdir -p github/WeAreROLI/
+cd github/WeAreROLI/
 git clone https://github.com/WeAreROLI/JUCE.git
 ~~~~
+
+## Get the VST SDK
+You also need the Steinberg VST SDK. When I started out with kVstSequencer, my DAW (Bitwig) didn't yet feature support for VST 3 plugins, so I set up for a VST 2 plugin. Unfortunately, the most up-to-date version of the SDK doesn't even support VST 2 plugin builds, so you'll need to download an older version. [This one](https://www.steinberg.net/sdk_downloads/vstsdk366_27_06_2016_build_61.zip "This one") is still working, so download and extract to ~/VST_SDK/.
 
 ## Check out libkohaerenzstiftung and kVstSequencer itself
 kVstSequencer also relies on libkohaerenzstiftung, my tiny little utility library with defines and functions I commonly use across my different projects. You can either clone my whole C repository or just sparse-check out kVstSequencer and libkohaerenzstiftung:
 
 ~~~~
 cd ~
-mkdir -p git/kohaerenzstifter/c
-cd git/kohaerenzstifter/c
+mkdir -p github/kohaerenzstifter/c
+cd github/kohaerenzstifter/c
 git init
 git remote add -f origin https://github.com/kohaerenzstifter/c.git
 echo "kohaerenzstiftung" >> .git/info/sparse-checkout
@@ -36,7 +39,7 @@ git pull origin master
 
 ~~~~
 cd kVstSequencer/Builds/LinuxMakefile/
-make KOHAERENZSTIFTUNG_PATH=~/git/kohaerenzstifter/c/kohaerenzstiftung/ JUCE_PATH=~/git/WeAreROLI/JUCE/
+make VST_PATH=~/VST_SDK/ KOHAERENZSTIFTUNG_PATH=~/github/kohaerenzstifter/c/kohaerenzstiftung/ JUCE_PATH=~/github/WeAreROLI/JUCE/
 ~~~~
 
 The "build" subdirectory should now contain the plugin named "kVstSequencer.so".
@@ -45,7 +48,7 @@ The "build" subdirectory should now contain the plugin named "kVstSequencer.so".
 # Creating a TB 303 style baseline
 
 I have tested kVstSequencer under Linux with Bitwig and will show you briefly how this is done. Please note that some of the features I describe here are NOT possible in Bitwig 1.x, but Bitwig 2.x can be downloaded and run for free in demo mode to try for yourself!
-First you have to tell Bitwig where it can find the step sequencer plugin, so on the right side of the screen, make the "Files Browser" appear, next right-click on "Library Locations" and then on "Add Plug-in Location" and select the correct path (e.g. ~/git/kohaerenzstifter/c/kVstSequencer/Builds/LinuxMakefile/build):
+First you have to tell Bitwig where it can find the step sequencer plugin, so on the right side of the screen, make the "Files Browser" appear, next right-click on "Library Locations" and then on "Add Plug-in Location" and select the correct path (e.g. ~/github/kohaerenzstifter/c/kVstSequencer/Builds/LinuxMakefile/build):
 
 ![1](https://github.com/kohaerenzstifter/c/blob/master/kVstSequencer/1.jpg)
 
