@@ -30,6 +30,7 @@ mkdir -p github/kohaerenzstifter/c
 cd github/kohaerenzstifter/c
 git init
 git remote add -f origin https://github.com/kohaerenzstifter/c.git
+git config core.sparseCheckout true
 echo "kohaerenzstiftung" >> .git/info/sparse-checkout
 echo "kVstSequencer" >> .git/info/sparse-checkout
 git pull origin master
@@ -38,7 +39,7 @@ git pull origin master
 ## Build kVstSequencer
 
 ~~~~
-cd kVstSequencer/Builds/LinuxMakefile/
+cd ~/github/kohaerenzstifter/c/kVstSequencer/Builds/LinuxMakefile/
 make VST_PATH=~/VST_SDK/ KOHAERENZSTIFTUNG_PATH=~/github/kohaerenzstifter/c/kohaerenzstiftung/ JUCE_PATH=~/github/WeAreROLI/JUCE/
 ~~~~
 
