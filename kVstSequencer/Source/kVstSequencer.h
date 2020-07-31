@@ -30,9 +30,6 @@ extern "C" {
 #define TICKS_PER_CROTCHET 24
 #define TICKS_PER_BAR (TICKS_PER_CROTCHET * CROTCHETS_PER_BAR)
 
-#define EVENTSTEPS_PER_BAR MAX_EVENTSTEPS_PER_BAR
-#define MICROTICKS_PER_BAR EVENTSTEPS_PER_BAR
-
 typedef struct {
 	void *pointer;
 	int8_t number;
@@ -46,12 +43,12 @@ typedef ssize_t (*nullFunc_t)(void);
   ((12 * (n)->noteValue->octave) + ((n)->noteValue->sharp ? 1 : 0)))
 
 typedef enum {
-	midiMessageTypeNoteOff,
-	midiMessageTypeController,
-} midiMessageType_t;
+	noteOrControllerTypeNote,
+	noteOrControllerTypeController
+} noteOrControllerType_t;
 
 typedef struct {
-	midiMessageType_t midiMessageType;
+	noteOrControllerType_t noteOrControllerType;
 	uint8_t channel;
 	union {
 		struct {
@@ -69,6 +66,13 @@ typedef enum {
 	patternTypeNote,
 	patternTypeController
 } patternType_t;
+
+/*
+versionType_t and patternType_t have to be aliases
+for serialisation reasons; for details, see loadStorePattern().
+*/
+typedef patternType_t versionType_t;
+#define CURRENT_VERSION ((versionType_t) (patternTypeController + 1))
 
 #define NOTE_C 0
 #define NOTE_D 1
@@ -155,6 +159,8 @@ struct pattern {
 	volatile GSList *children;
 	volatile uint32_t bars;
 	volatile uint32_t stepsPerBar;
+	volatile gboolean shufflingWithParent;
+	volatile uint8_t shuffle;
 	volatile union {
 		struct {
 			struct {
@@ -182,6 +188,21 @@ struct pattern {
 	};
 };
 
+typedef struct {
+	uint8_t channel;
+	double ppqPosition;
+	noteOrControllerType_t noteOrControllerType;
+	union {
+		struct {
+			noteEventStep_t *noteEventStep;
+		} noteType;
+		struct {
+			pattern_t *pattern;
+			controllerEventStep_t *controllerEventStep;
+		} controllerType;
+	};
+} shuffled_t;
+
 #define SEGFAULT_POINTER (((null_t *) NULL)->pointer)
 #define SEGFAULT_NUMBER (((null_t *) NULL)->number)
 #define SEGFAULT_BOOLEAN (((null_t *) NULL)->boolean)
@@ -199,6 +220,10 @@ struct pattern {
   ((uint8_t *) SEGFAULT_POINTER))
 #define PARAMETER(p) (*(PTR_PARAMETER((p))))
 
+#define SHUFFLING_WITH_PARENT(p) ((p)->shufflingWithParent)
+#define SHUFFLE(p) ((p)->shuffle)
+#define ACTUAL_SHUFFLE(p) \
+  SHUFFLING_WITH_PARENT((p)) ? getShuffle(PARENT((p))) : (p)->shuffle
 #define PTR_CHILDREN(p) (&((p)->children))
 #define CHILDREN(p) (*PTR_CHILDREN((p)))
 #define PTR_VALUES(p) (IS_DUMMY((p)) ? ((GSList **) SEGFAULT_POINTER) : \
@@ -296,6 +321,11 @@ struct pattern {
   SEGFAULT_NUMBER)
 #define MAX_BARS 512
 #define MAX_EVENTSTEPS_PER_BAR 131072
+#define BEATS_PER_BAR 4
+#define QUAVERS_PER_BEAT 2
+extern char dummy[((MAX_EVENTSTEPS_PER_BAR % BEATS_PER_BAR) == 0) ? 1 : -1];
+#define MAX_EVENTSTEPS_PER_BEAT (MAX_EVENTSTEPS_PER_BAR / BEATS_PER_BAR)
+#define MAX_EVENTSTEPS_PER_QUAVER (MAX_EVENTSTEPS_PER_BEAT / QUAVERS_PER_BEAT)
 #define MAX_STEPS_PER_BAR(p) \
   (IS_DUMMY((p)) ? (MAX_EVENTSTEPS_PER_BAR / 1) : \
   (MAX_EVENTSTEPS_PER_BAR / (EVENTSTEPS_PER_USERSTEP(TYPE((p))))))
@@ -415,6 +445,16 @@ VARIABLE( \
   } \
 )
 
+VARIABLE( \
+  struct { \
+    volatile GSList *value;
+  }, \
+  shuffledEvents,
+  { \
+    .value = NULL COMMA \
+  } \
+)
+
 VARIABLE ( \
   long, \
   subtractSeconds, \
@@ -464,8 +504,9 @@ void promotePattern(pattern_t *pattern, err_t *e);
 void loadStorePattern(pattern_t **pattern,
   void *stream, gboolean load, pattern_t *parent, err_t *e);
 void setLive(pattern_t *newRoot, err_t *e);
-void lock(void);
+void lock(gboolean deleteShuffled);
 void unlock(void);
+uint8_t getShuffle(pattern_t *pattern);
 
 #ifdef __cplusplus
 };

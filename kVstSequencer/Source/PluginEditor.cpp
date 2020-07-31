@@ -486,6 +486,8 @@ static void cbIncrement(void *data);
 class SpinButton : public CompositeComponent, Label::Listener
 {
 public:
+	typedef void (*valueChangedListener_t)(void);
+
 	int32_t (*more)(int32_t value);
 	int32_t (*less)(int32_t value);
 	gboolean enabled;
@@ -495,9 +497,10 @@ public:
 	SpinButton(CompositeComponent *parent,
 	  int32_t min, int32_t max, int32_t value,
 	  int32_t (*more)(int32_t value) = NULL,
-	  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE) :
+	  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE,
+	  valueChangedListener_t valueChangedListener = NULL) :
 	  CompositeComponent(parent, FALSE), min(min), max(max), value(value),
-	  enabled(TRUE), more(more), less(less) {
+	  enabled(TRUE), more(more), less(less), valueChangedListener(valueChangedListener) {
 		MARK();
 
 		this->downButton = getSimpleButton(this, "-", cbDecrement, this);
@@ -510,7 +513,7 @@ public:
 
 		this->upButton = getSimpleButton(this, "+", cbIncrement, this);
 
-		setButtonsEnabled();
+		setEnabled();
 	}
     virtual ~SpinButton() override {
 		MARK();
@@ -525,10 +528,16 @@ public:
 
 		this->value = value;
 		this->label->setText(intToString(value));
-		this->setButtonsEnabled();
+		this->setEnabled();
 
 finish:
 		return;
+	}
+
+	int32_t getValue(void) {
+		MARK();
+
+		return this->value;
 	}
 
 	void setButtonsEnabled(void) {
@@ -601,13 +610,16 @@ finish:
 
 		if (valid) {
 			this->value = (string[0] == '-') ? -number : number;
+			if (valueChangedListener != NULL) {
+				valueChangedListener();
+			}
 		} else {
 			char buffer[ELEVEN];
 			snprintf(buffer, sizeof(buffer), "%u", this->value);
 			((SimpleLabel *) label)->setText(buffer);
 		}
 
-		this->setEnabled(this->enabled);
+		this->setEnabled();
 		free(copy);
 	}
 
@@ -618,6 +630,9 @@ finish:
 	virtual void editorHidden(Label *label, TextEditor &textEditor) {
 		MARK();
 	}
+	valueChangedListener_t getValueChangedListener(void) {
+		return valueChangedListener;
+	}
 
 private:
 	SimpleButton *downButton;
@@ -625,6 +640,7 @@ private:
 	int32_t min;
 	int32_t max;
 	String *lastResult;
+	valueChangedListener_t valueChangedListener;
 };
 
 static struct {
@@ -792,12 +808,12 @@ static SimpleTextEditor *getTextEditor(CompositeComponent *parent)
 
 static SpinButton *getSpinButton(CompositeComponent *parent, int32_t min,    
   int32_t max, int value, int32_t (*more)(int32_t value) = NULL,
-  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE)
+  int32_t (*less)(int32_t value) = NULL, gboolean editable = TRUE, void (*valueChangedListener)(void) = NULL)
 {
 	MARK();
 
 	SpinButton *result =
-	  new SpinButton(parent, min, max, value, more, less, editable);
+	  new SpinButton(parent, min, max, value, more, less, editable, valueChangedListener);
 
 	return result;
 }
@@ -851,7 +867,7 @@ static void cbDoAddPattern(void *data)
 	  createPattern.patternType,  createPattern.channelSpinButton->value,
 	  createPattern.controllerSpinButton->value);
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	terror(adjustSteps(pattern, NR_BARS(pattern),
@@ -946,7 +962,7 @@ static void cbSetupNoteValue(void *data)
 		}
 	}
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	terror(unsoundPattern(setupValue.pattern, e))
@@ -1013,7 +1029,7 @@ static void cbTriggerControllerValue(void *data)
 
 	initErr(e);
 
-	lock();
+	lock(FALSE);
 	locked = TRUE;
 
 	midiMessage =
@@ -1044,7 +1060,7 @@ static void cbSetupControllerValue(void *data)
 
 	initErr(e);
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (controllerValue == NULL) {
@@ -1458,6 +1474,8 @@ static SimpleButton *loadButton = NULL;
 static SimpleButton *storeButton = NULL;
 static SimpleButton *barsButton = NULL;
 static SimpleButton *stepsPerBarButton = NULL;
+static SimpleButton *shuffleWithParentButton = NULL;
+static SpinButton *shuffleSpinButton = NULL;
 static SimpleButton *childrenButton = NULL;
 static SimpleButton *siblingsButton = NULL;
 static SimpleButton *previousButton = NULL;
@@ -1480,6 +1498,8 @@ static void setTexts(void)
 		  "Go Live!" : "Parent!");
 		topOrAssignOrEditButton->setButtonText((IS_ROOT(current.pattern)) ?
 		  "Assign ..." : "Top!");
+		shuffleWithParentButton->setButtonText(SHUFFLING_WITH_PARENT(current.pattern)
+		  ? "Unshuffle from parent" : "Shuffle with parent");
 	}
 }
 
@@ -1834,6 +1854,19 @@ finish:
 	return;
 }
 
+uint8_t getShuffle(pattern_t *pattern)
+{
+	uint8_t result = 0;
+
+	if (SHUFFLING_WITH_PARENT(pattern)) {
+		result = ACTUAL_SHUFFLE(PARENT(pattern));
+	} else {
+		result = ACTUAL_SHUFFLE(pattern);
+	}
+
+	return result;
+}
+
 static void renderSteps(pattern_t *pattern, uint32_t bar, 
   CompositeComponent *stepsComponent)
 {
@@ -1922,6 +1955,8 @@ static void render(void)
 	shiftLeftButton->setEnabled(FALSE);
 	shiftRightButton->setEnabled(FALSE);
 	randomiseSpinButton->setEnabled(live ? FALSE : TRUE);
+	shuffleWithParentButton->setEnabled(live ? FALSE : TRUE);
+	shuffleSpinButton->setEnabled(live ? FALSE : TRUE);
 
 #ifdef SIGNALLING
 #ifdef SIGNALLING_MUX
@@ -1939,7 +1974,11 @@ static void render(void)
 		goto finish;
 	}
 
+	shuffleSpinButton->setValue(ACTUAL_SHUFFLE(current.pattern), NULL);
+	shuffleSpinButton->setEnabled(!SHUFFLING_WITH_PARENT(current.pattern));
+
 	if (IS_ROOT(current.pattern)) {
+		shuffleWithParentButton->setEnabled(FALSE);
 		gboolean enabled = FALSE;
 		for (unsigned int i = 0; i < NR_BANKS; i++) {
 			if (banks[i] != NULL) {
@@ -2608,7 +2647,7 @@ static void cbLoad(void *data)
 	terror(fileInputStream->openedOk())
 	terror(loadStorePattern(&pattern, fileInputStream, TRUE,
 	  (pattern_t *) patterns.root, e))
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 	if ((IS_DUMMY(pattern))&&(NR_USERSTEPS(pattern) == 1)&&
 	  IS_SET(USERSTEP_AT(pattern, 0), TYPE(pattern))) {
@@ -2702,6 +2741,45 @@ static void cbBars(void *data)
 	MARK();
 
 	showDialog(getBarsDialog);
+}
+
+static void cbShuffleWithParent(void *data)
+{
+	MARK();
+
+	gboolean locked = FALSE;
+
+	lock(TRUE);
+	locked = TRUE;
+
+	if (current.pattern->shufflingWithParent) {
+		SHUFFLE(current.pattern) = ACTUAL_SHUFFLE(current.pattern);
+	}
+	current.pattern->shufflingWithParent = !current.pattern->shufflingWithParent;
+	render();
+
+finish:
+	if (locked) {
+		unlock();
+	}
+}
+
+static void cbShuffleChanged(void)
+{
+	MARK();
+
+	gboolean locked = FALSE;
+
+	lock(TRUE);
+	locked = TRUE;
+
+	SHUFFLE(current.pattern) = shuffleSpinButton->getValue();
+	//render(); ?
+
+finish:
+	if (locked) {
+		unlock();
+	}
 }
 
 static void cbStepsPerBar(void *data)
@@ -2849,6 +2927,8 @@ static CompositeComponent *getCentreBox(CompositeComponent *compositeComponent)
 	CompositeComponent *valuesBox = NULL;
 	CompositeComponent *randomisationBox = NULL;
 	CompositeComponent *loadStoreBox = NULL;
+	CompositeComponent *barsAndStepsPerBarBox = NULL;
+	CompositeComponent *shuffleBox = NULL;
 	CompositeComponent *result = getBox(compositeComponent, TRUE);
 	CompositeComponent *box = getBox(result, FALSE);
 
@@ -2863,9 +2943,17 @@ static CompositeComponent *getCentreBox(CompositeComponent *compositeComponent)
 	loadButton = getSimpleButton(loadStoreBox, "Load ...", cbLoad, NULL);
 	storeButton = getSimpleButton(loadStoreBox, "Store ...", cbStore, NULL);
 
-	barsButton = getSimpleButton(box, "Bars ...", cbBars, NULL);
+	barsAndStepsPerBarBox = getBox(box, TRUE);
+
+	barsButton = getSimpleButton(barsAndStepsPerBarBox, "Bars ...", cbBars, NULL);
 	stepsPerBarButton =
-	  getSimpleButton(box, "Steps per Bar ...", cbStepsPerBar, NULL);
+	  getSimpleButton(barsAndStepsPerBarBox, "Steps per Bar ...", cbStepsPerBar, NULL);
+
+	shuffleBox = getBox(box, TRUE);
+
+	shuffleWithParentButton = getSimpleButton(shuffleBox, "Shuffle:", cbShuffleWithParent, NULL);
+
+	shuffleSpinButton = getSpinButton(shuffleBox, 0, 100, 50, NULL, NULL, TRUE, cbShuffleChanged);
 
 	box = getBox(result, FALSE);
 	childrenButton = getSimpleButton(box, "Children ...", cbChildren, NULL);
@@ -2877,9 +2965,10 @@ static CompositeComponent *getCentreBox(CompositeComponent *compositeComponent)
 	velocitiesButton =
 	  getSimpleButton(valuesBox, "Velocities ...", cbVelocities, NULL);
 	randomisationBox = getBox(box, TRUE);
-	randomiseSpinButton = getSpinButton(randomisationBox, 0, 100, 50);
+
 	randomiseButton =
 	  getSimpleButton(randomisationBox, "Randomise!", cbRandomise, NULL);
+	randomiseSpinButton = getSpinButton(randomisationBox, 0, 100, 50);
 
 	return result;
 }

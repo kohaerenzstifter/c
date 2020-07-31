@@ -22,11 +22,15 @@
 
 static CriticalSection *criticalSection = NULL;
 
-void lock(void)
+void lock(gboolean deleteShuffled)
 {
 	MARK();
 
 	criticalSection->enter();
+
+	if (deleteShuffled) {
+		g_slist_free_full((GSList *) shuffledEvents.value, free); shuffledEvents.value = NULL;
+	}
 }
 
 void unlock(void)
@@ -47,7 +51,7 @@ static gboolean initialised = FALSE;
 	nextEventStep = 0; \
   } while (FALSE);
 
-void performNoteEventStep(noteEventStep_t *noteEventStep,
+static void doPerformNoteEventStep(noteEventStep_t *noteEventStep,
   MidiBuffer& midiBuffer, int32_t *position, uint8_t channel)
 {
 	MARK();
@@ -81,17 +85,79 @@ void performNoteEventStep(noteEventStep_t *noteEventStep,
 	}
 }
 
-void performControllerEventStep(pattern_t *pattern,
+static gint compareShuffled(gconstpointer a, gconstpointer b)
+{
+	shuffled_t *first = (shuffled_t *) a;
+	shuffled_t *second = (shuffled_t *) b;
+
+	gint result = (first->ppqPosition < second->ppqPosition) ? -1 :
+	  (second->ppqPosition < first->ppqPosition) ? 1 : 0;
+
+	return result;
+}
+
+static void schedule(shuffled_t *shuffled)
+{
+	MARK();
+
+	shuffledEvents.value = g_slist_insert_sorted(((GSList *)
+	  shuffledEvents.value), shuffled, compareShuffled);
+}
+
+static shuffled_t *getShuffled(uint8_t channel, double ppqPosition,
+  noteOrControllerType_t noteOrControllerType)
+{
+	MARK();
+
+	shuffled_t *result = (shuffled_t *) calloc(1, sizeof(shuffled_t));
+
+	result->channel = channel;
+	result->ppqPosition = ppqPosition;
+	result->noteOrControllerType = noteOrControllerType;
+
+	return result;
+}
+
+static shuffled_t *getShuffledNote(noteEventStep_t *noteEventStep, uint8_t channel,
+  double ppqPosition)
+{
+	MARK();
+
+	shuffled_t *result = getShuffled(channel, ppqPosition, noteOrControllerTypeNote);
+
+	result->noteType.noteEventStep = noteEventStep;
+
+	return result;
+}
+
+static void scheduleNoteEvent(noteEventStep_t *noteEventStep, uint8_t channel,
+  double ppqPosition)
+{
+	MARK();
+
+	shuffled_t *shuffled = getShuffledNote(noteEventStep, channel, ppqPosition);
+
+	schedule(shuffled);
+}
+
+static void performNoteEventStep(noteEventStep_t *noteEventStep,
+  MidiBuffer& midiBuffer, int32_t *position, uint8_t channel, double ppqPosition)
+{
+	MARK();
+
+	if (ppqPosition < 0) {
+		doPerformNoteEventStep(noteEventStep, midiBuffer, position, channel);
+	} else {
+		scheduleNoteEvent(noteEventStep, channel, ppqPosition);
+	}
+}
+
+static void doPerformControllerEventStep(pattern_t *pattern,
   controllerEventStep_t *controllerEventStep,
   MidiBuffer& midiBuffer, int32_t *position, uint8_t channel)
 {
 	MARK();
 
-	if (controllerEventStep->controllerValue == NULL) {
-		goto finish;
-	}
-
-	
 	midiBuffer.addEvent(MidiMessage::controllerEvent(channel,
 	  pattern->controller.parameter,
 	  controllerEventStep->controllerValue->value), (*position)++);
@@ -100,7 +166,72 @@ finish:
 	return;
 }
 
-void performStep(pattern_t *pattern, uint64_t eventStep,
+static shuffled_t* getShuffledController(pattern_t *pattern,
+  controllerEventStep_t *controllerEventStep, uint8_t channel,
+  double ppqPosition)
+{
+	MARK();
+
+	shuffled_t *result = getShuffled(channel, ppqPosition, noteOrControllerTypeController);
+
+	result->controllerType.pattern = pattern;
+	result->controllerType.controllerEventStep = controllerEventStep;
+
+	return result;
+}
+
+static void scheduleControllerEvent(pattern_t *pattern,
+  controllerEventStep_t *controllerEventStep, uint8_t channel,
+  double ppqPosition)
+{
+	MARK();
+
+	shuffled_t *shuffled = getShuffledController(pattern, controllerEventStep,
+	  channel, ppqPosition);
+	
+	schedule(shuffled);
+}
+
+static void performControllerEventStep(pattern_t *pattern,
+  controllerEventStep_t *controllerEventStep,
+  MidiBuffer& midiBuffer, int32_t *position, uint8_t channel,
+  double ppqPosition)
+{
+	MARK();
+
+	if (controllerEventStep->controllerValue == NULL) {
+		goto finish;
+	}
+
+	if (ppqPosition < 0) {
+		doPerformControllerEventStep(pattern, controllerEventStep,
+		  midiBuffer, position, channel);
+	} else {
+		scheduleControllerEvent(pattern, controllerEventStep,
+		  channel, ppqPosition);
+	}
+
+finish:
+	return;
+}
+
+static void doPerformShuffled(shuffled_t *shuffled, MidiBuffer& midiBuffer,
+  int32_t *position)
+{
+	if (shuffled->noteOrControllerType == noteOrControllerTypeController) {
+		doPerformControllerEventStep(shuffled->controllerType.pattern,
+		  shuffled->controllerType.controllerEventStep, midiBuffer,
+		    position, shuffled->channel);
+	} else {
+		doPerformNoteEventStep(shuffled->noteType.noteEventStep,
+		  midiBuffer, position, shuffled->channel);
+	}
+}
+
+#define UNSHUFFLED_QUAVER_DURATION (((double) 1) / ((double) 2))
+#define FULLY_SHUFFLED_QUAVER_DURATION (((double) 1) / ((double) 3))
+
+static void performStep(pattern_t *pattern, uint64_t eventStep,
   MidiBuffer& midiBuffer, int32_t *position)
 {
 	MARK();
@@ -111,6 +242,9 @@ void performStep(pattern_t *pattern, uint64_t eventStep,
 	GSList *cur = NULL;
 	uint32_t userStepsPerBar = 0;
 	uint32_t eventStepsPerBar = 0;
+	int32_t eventStepInBeat = -1;
+	double ppqPosition = -1;
+	uint32_t shufflePercentage = 0;
 
 	for (cur = (GSList *) pattern->children; cur != NULL;
 	  cur = g_slist_next(cur)) {
@@ -139,12 +273,36 @@ void performStep(pattern_t *pattern, uint64_t eventStep,
 	numberOfEventSteps = eventStepsPerBar * NR_BARS(pattern);
 	idx = (eventStep / factor) % numberOfEventSteps;
 
+	if (((shufflePercentage = ACTUAL_SHUFFLE(pattern)) > 0)&&(eventStepsPerBar > 7)) {
+		ppqPosition = (((double) eventStep) / ((double) MAX_EVENTSTEPS_PER_BEAT));
+		eventStep /= factor;
+
+		uint32_t eventStepsPerBeat = (eventStepsPerBar >> 2);
+		uint32_t eventStepsPerQuaver = (eventStepsPerBeat >> 1);
+		int32_t eventStepInBeat = (eventStep % eventStepsPerBeat);
+
+		gboolean shuffle = (eventStepInBeat >= (eventStepsPerBeat >> 1));
+
+		if (shuffle) {
+			double doubleFactor = ((double) shufflePercentage) / ((double) 100);
+			double quaverDuration = ((double) UNSHUFFLED_QUAVER_DURATION) - doubleFactor * (((double) UNSHUFFLED_QUAVER_DURATION) - ((double) FULLY_SHUFFLED_QUAVER_DURATION));
+
+			double offsetFromQuaverStart =
+			  (((double) (eventStep % eventStepsPerQuaver)) /
+			  ((double) eventStepsPerQuaver)) * quaverDuration;
+			
+			double quaverDelay = ((double) UNSHUFFLED_QUAVER_DURATION) - quaverDuration;
+
+			ppqPosition += + quaverDelay + offsetFromQuaverStart;
+		}
+	}
+
 	if (IS_NOTE(pattern)) {
 		performNoteEventStep(((noteEventStep_t *) EVENTSTEP_AT(pattern, idx)),
-		  midiBuffer, position, CHANNEL(pattern));
+		  midiBuffer, position, CHANNEL(pattern), ppqPosition);
 	} else {
 		performControllerEventStep(pattern, ((controllerEventStep_t *)
-		  EVENTSTEP_AT(pattern, idx)), midiBuffer, position, CHANNEL(pattern));
+		  EVENTSTEP_AT(pattern, idx)), midiBuffer, position, CHANNEL(pattern), ppqPosition);
 	}
 finish:
 	return;
@@ -234,6 +392,19 @@ static gboolean setRoot(MidiBuffer& midiBuffer)
 	return (root != patterns.root);
 }
 
+static void performShuffled(double ppqPosition, MidiBuffer& midiBuffer, int32_t *position)
+{
+	for (volatile GSList *cur = shuffledEvents.value; cur != NULL; cur = shuffledEvents.value) {
+		shuffled_t *shuffled = (shuffled_t *) cur->data;
+		if (shuffled->ppqPosition > ppqPosition) {
+			break;
+		}
+		doPerformShuffled(shuffled, midiBuffer, position);
+		shuffledEvents.value = g_slist_delete_link(((GSList *) shuffledEvents.value),
+		  ((GSList *) shuffledEvents.value));
+	}
+}
+
 static void process(
   AudioPlayHead::CurrentPositionInfo *currentPositionInfo,
   MidiBuffer& midiBuffer,
@@ -251,7 +422,7 @@ static void process(
 	double millionTimesNumerator =
 	  (((double) MILLION) * ((double) currentPositionInfo->timeSigNumerator));
 
-	lock();
+	lock(FALSE);
 	locked = TRUE;
 
 	if (live) {
@@ -277,11 +448,11 @@ static void process(
 		MidiMessage mm;
 		midiMessage = (midiMessage_t *) cur->data;
 
-		switch (midiMessage->midiMessageType) {
-			case midiMessageTypeNoteOff:
+		switch (midiMessage->noteOrControllerType) {
+			case noteOrControllerTypeNote:
 				mm = MidiMessage::noteOff(midiMessage->channel, midiMessage->noteOff.noteNumber);
 				break;
-			case midiMessageTypeController:
+			case noteOrControllerTypeController:
 				mm = MidiMessage::controllerEvent(midiMessage->channel,
 				  midiMessage->controller.parameter,
 				  midiMessage->controller.value);
@@ -300,17 +471,21 @@ static void process(
 
 	atMicrotick =
 	  (((double) currentPositionInfo->ppqPosition) * MILLION)
-	  * (((double) MICROTICKS_PER_BAR) / millionTimesNumerator);
+	  * (((double) MAX_EVENTSTEPS_PER_BAR) / millionTimesNumerator);
 	if (!isPlaying) {
 		nextEventStep = atMicrotick;
 	}
+
 	while (atMicrotick >= nextEventStep) {
 		if (patterns.root != NULL) {
 			performStep(((pattern_t *) patterns.root), nextEventStep,
 			  midiBuffer, &position);
 		}
+		double ppqPosition = ((double) nextEventStep) / ((double) MAX_EVENTSTEPS_PER_BEAT);
+		performShuffled(ppqPosition, midiBuffer, &position);
 		nextEventStep++;
 	}
+	performShuffled(currentPositionInfo->ppqPosition, midiBuffer, &position);
 	stepToSignal = (nextEventStep - 1) % (MAX_BARS * MAX_EVENTSTEPS_PER_BAR);
 	guiSignalStep(stepToSignal);
 
@@ -369,19 +544,9 @@ KVstSequencerAudioProcessor::KVstSequencerAudioProcessor()
 #endif
 {
 	MARK();
-
 #if 0
-	char outbuffer[100];
-	char errbuffer[100];
-
-	snprintf(outbuffer, sizeof(outbuffer), "/tmp/kVstSequencer.%d.out", getpid());
-	mkfifo(outbuffer, 0666);
-	snprintf(errbuffer, sizeof(errbuffer), "/tmp/kVstSequencer.%d.err", getpid());
-	mkfifo(errbuffer, 0666);
-	setOutput(outbuffer, errbuffer, NULL);
-#endif
 	setOutput("/tmp/kVstSequencer.out", "/tmp/kVstSequencer.err", NULL);
-
+#endif
 	err_t err;
 	err_t *e = &err;
 
@@ -616,7 +781,7 @@ void KVstSequencerAudioProcessor::getStateInformation (MemoryBlock& destData)
 
 	memoryOutputStream = new MemoryOutputStream(destData, FALSE);
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (live) {
@@ -666,7 +831,7 @@ void KVstSequencerAudioProcessor::setStateInformation (const void* data,
 
 	memoryInputStream = new MemoryInputStream(data, sizeInBytes, FALSE);
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	terror(failIfFalse(memoryInputStream->read(&length, sizeof(length))

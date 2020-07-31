@@ -37,7 +37,7 @@ void fireMidiMessage(midiMessage_t *midiMessage, err_t *e)
 
 	gboolean locked = FALSE;
 
-	lock();
+	lock(FALSE);
 	locked = TRUE;
 
 	midiMessages = g_slist_prepend((GSList *) midiMessages, midiMessage);
@@ -49,13 +49,13 @@ finish:
 	return;
 }
 
-static midiMessage_t *getMidiMessage(midiMessageType_t midiMessageType,
+static midiMessage_t *getMidiMessage(noteOrControllerType_t noteOrControllerType,
   uint8_t channel)
 {
 	MARK();
 
 	midiMessage_t *result = (midiMessage_t *) calloc(1, sizeof(midiMessage_t));
-	result->midiMessageType = midiMessageType;
+	result->noteOrControllerType = noteOrControllerType;
 	result->channel = channel;
 
 	return result;
@@ -66,7 +66,7 @@ midiMessage_t *getControllerMidiMessage(uint8_t parameter, int8_t value,
 {
 	MARK();
 
-	midiMessage_t *result = getMidiMessage(midiMessageTypeController, channel);
+	midiMessage_t *result = getMidiMessage(noteOrControllerTypeController, channel);
 
 	result->controller.parameter = parameter;
 	result->controller.value = value;
@@ -79,7 +79,7 @@ midiMessage_t *getNoteOffMidiMessage(noteEvent_t *noteEvent)
 	MARK();
 
 	midiMessage_t *result =
-	  getMidiMessage(midiMessageTypeNoteOff, CHANNEL(noteEvent->pattern));
+	  getMidiMessage(noteOrControllerTypeNote, CHANNEL(noteEvent->pattern));
 	result->noteOff.noteNumber = MIDI_PITCH(noteEvent);
 
 	return result;
@@ -93,7 +93,7 @@ static void unsoundNoteEvent(noteEvent_t *offNoteEvent,
 	midiMessage_t *midiMessage = NULL;
 	gboolean locked = FALSE;
 
-	lock();
+	lock(FALSE);
 	locked = TRUE;
 
 	if (offNoteEvent->off.noteOffLink == NULL) {
@@ -124,7 +124,7 @@ void unsoundPattern(pattern_t *pattern, err_t *e)
 	gboolean locked = FALSE;
 
 	terror(failIfFalse((IS_NOTE(pattern))))
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (EVENTSTEPS(pattern) == NULL) {
@@ -155,7 +155,7 @@ static void unsoundPattern2(pattern_t *pattern, err_t *e)
 
 	gboolean locked = FALSE;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	for (GSList *cur = ((GSList *) CHILDREN(pattern)); cur != NULL;
@@ -182,7 +182,7 @@ void unsoundAllPatterns(err_t *e)
 
 	gboolean locked = FALSE;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (patterns.root != NULL) {
@@ -454,7 +454,7 @@ void setDummyStep(pattern_t *pattern, dummyUserStep_t *dummyUserStep,
 
 	gboolean locked = FALSE;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 	dummyUserStep->set = set;
 
@@ -474,7 +474,7 @@ void setControllerStep(pattern_t *pattern,
 
 	gboolean locked = FALSE;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	controllerUserStep->value = value;
@@ -499,7 +499,7 @@ void setNoteStep(pattern_t *pattern, noteUserStep_t *noteUserStep,
 		goto finish;
 	}
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 	terror(unsoundPattern(pattern, e))
 
@@ -536,7 +536,7 @@ void setSlide(pattern_t *pattern, noteUserStep_t *noteUserStep,
 
 	terror(failIfFalse(((!slide)||(noteUserStep->value != NULL))))
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 	terror(unsoundPattern(pattern, e))
 
@@ -677,7 +677,7 @@ void adjustSteps(pattern_t *pattern, uint32_t bars,
 	uint32_t stepMultiplier = (stepsPerBar >= haveStepsPerBar) ?
 	  1 : (haveStepsPerBar / stepsPerBar);
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (IS_NOTE(pattern)) {
@@ -734,7 +734,7 @@ void deleteChild(pattern_t *parent, GSList *childLink,
 	gboolean locked = FALSE;
 	pattern_t *pattern = (pattern_t *) childLink->data;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (IS_NOTE(pattern)) {
@@ -762,7 +762,7 @@ void promotePattern(pattern_t *pattern, err_t *e)
 	pattern_t *parent = NULL;
 	GSList *link = NULL;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (IS_NOTE(pattern)) {
@@ -810,7 +810,7 @@ void allNotesOff(err_t *e)
 
 	gboolean locked = FALSE;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	terror(g_slist_foreach((GSList *) notesOff.value, noteOff, e))
@@ -1227,8 +1227,10 @@ void loadStorePattern(pattern_t **pattern, void *stream,
 	OutputStream *outputStream = NULL;
 	InputStream *inputStream = NULL;
 	gboolean locked = FALSE;
+	versionType_t version = CURRENT_VERSION;
+	patternType_t patternType;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	if (load) {
@@ -1242,7 +1244,28 @@ void loadStorePattern(pattern_t **pattern, void *stream,
 		terror(writeStringToStream(NAME(p), outputStream, e))
 	}
 
-	terror(readWriteStream(&TYPE(p), sizeof(TYPE(p)), stream, load, e))
+	patternType = TYPE(p);
+
+	if (load) {
+		terror(readWriteStream(&patternType, sizeof(patternType), stream, TRUE, e))
+		// find out pattern version
+		if (patternType > patternTypeController) {
+			version = patternType;
+			terror(failIfFalse((version == CURRENT_VERSION)))
+			terror(readWriteStream(&TYPE(p), sizeof(TYPE(p)), stream, TRUE, e))
+		} else {
+			version = patternTypeController;
+			TYPE(p) = patternType;
+		}
+	} else {
+		terror(readWriteStream(&version, sizeof(version), stream, FALSE, e))
+		terror(readWriteStream(&TYPE(p), sizeof(TYPE(p)), stream, FALSE, e))
+	}
+
+	if (version > patternTypeController) {
+		terror(readWriteStream(((void *) &SHUFFLING_WITH_PARENT(p)), sizeof(SHUFFLING_WITH_PARENT(p)), stream, load, e))
+		terror(readWriteStream(((void *) &SHUFFLE(p)), sizeof(SHUFFLE(p)), stream, load, e))
+	}
 
 	if (!IS_DUMMY(p)) {
 		terror(readWriteStream((void *) PTR_CHANNEL(p),
@@ -1256,7 +1279,7 @@ void loadStorePattern(pattern_t **pattern, void *stream,
 
 	if (load) {
 		terror(adjustSteps(p, NR_BARS(p),
-		  NR_USERSTEPS_PER_BAR(p), 0,e))
+		  NR_USERSTEPS_PER_BAR(p), 0, e))
 	}
 
 	if (!IS_DUMMY(p)) {
@@ -1302,7 +1325,7 @@ void setLive(pattern_t *newRoot, err_t *e)
 
 	gboolean locked = FALSE;
 
-	lock();
+	lock(TRUE);
 	locked = TRUE;
 
 	terror(unsoundAllPatterns(e))

@@ -1,1 +1,1 @@
-gvim Source/*.cpp Source/*.h
+kate Source/*.cpp Source/*.h
